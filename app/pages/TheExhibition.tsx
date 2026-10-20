@@ -60,7 +60,7 @@ export function TheExhibition() {
   return (
     <main className="relative z-10 flex-1 w-full flex flex-col">
       {/* ═══ HERO: 3D ORBIT GALLERY ══════════════════════════════════ */}
-      <section className="relative w-full h-[100vh] -mt-[73px]">
+      <section className="relative w-full h-[100svh] -mt-[var(--header-h)]">
         {/* Overlay text */}
         <div className="absolute top-24 left-0 right-0 z-10 p-6 pointer-events-none">
           <motion.h1

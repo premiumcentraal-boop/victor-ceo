@@ -1,0 +1,16 @@
+{
+  "name": "VICTOR.CEO",
+  "short_name": "VICTOR.CEO",
+  "description": "Our stories are united. They live on beyond the walls and doors of our souls. There is only one take. Capture yours.",
+  "id": "/",
+  "start_url": "/",
+  "scope": "/",
+  "display": "standalone",
+  "background_color": "#010101",
+  "theme_color": "#010101",
+  "icons": [
+    { "src": "/icons/icon-192.png", "sizes": "192x192", "type": "image/png" },
+    { "src": "/icons/icon-512.png", "sizes": "512x512", "type": "image/png" },
+    { "src": "/icons/icon-maskable-512.png", "sizes": "512x512", "type": "image/png", "purpose": "maskable" }
+  ]
+}
