@@ -1,11 +1,14 @@
-import { useEffect, useRef, type MutableRefObject } from "react";
+import { useEffect, useMemo, useRef, useState, type KeyboardEvent, type MutableRefObject } from "react";
 import * as THREE from "three";
 import { GalaxyScene } from "./scene/GalaxyScene";
+import { pictureTabOrder } from "./scene/layout";
 
 type FlyState = "IDLE" | "FLYING_IN" | "FOCUSED" | "FLYING_OUT";
 
 export interface GalaxyHeroProps {
   images: string[];
+  /** The title of each picture, in the same order as `images`. Used for labels and screen readers. */
+  titles: string[];
   onImageClick?: (imageIndex: number) => void;
   focusedIndex: number | null;
   onFlyInComplete?: () => void;
@@ -19,9 +22,11 @@ const MAX_CAMERA_DISTANCE = 25;
 const IMMERSED_DISTANCE = 6.2;
 /** Idle spin in radians per second, about 0.6° a second. */
 const BASE_SPIN = 0.0105;
-const SPIN_LIMIT_X = 0.5;
 const DRAG_RADIANS_PER_PIXEL = 0.0035;
 const PINCH_ZOOM_SENSITIVITY = 1.15;
+/** Pinch zoom is kept within this range of the scroll position's distance. */
+const MIN_ZOOM = 0.8;
+const MAX_ZOOM = 1.3;
 /** Temporary approach distance for the picture fly-in. Step 5 replaces this with the framed focus move. */
 const APPROACH_DISTANCE = 3.8;
 
@@ -29,8 +34,13 @@ function springLerp(current: number, target: number, speed: number, dt: number):
   return current + (target - current) * (1 - Math.exp(-speed * dt));
 }
 
+function pad(n: number): string {
+  return String(n).padStart(2, "0");
+}
+
 export function GalaxyHero({
   images,
+  titles,
   onImageClick,
   focusedIndex,
   onFlyInComplete,
@@ -38,6 +48,9 @@ export function GalaxyHero({
   scrollProgressRef,
 }: GalaxyHeroProps) {
   const containerRef = useRef<HTMLDivElement>(null);
+  const labelRef = useRef<HTMLDivElement>(null);
+  const buttonRefs = useRef<(HTMLButtonElement | null)[]>([]);
+  const highlightRef = useRef<(index: number | null, tilt?: { x: number; y: number }, ring?: boolean) => void>(() => {});
   const onImageClickRef = useRef(onImageClick);
   onImageClickRef.current = onImageClick;
   const onFlyInCompleteRef = useRef(onFlyInComplete);
@@ -47,6 +60,12 @@ export function GalaxyHero({
   const prevFocusedIndexRef = useRef<number | null>(null);
   // Commands from React to the frame loop.
   const stateCommandRef = useRef<{ type: "FLY_IN" | "FLY_OUT"; index?: number } | null>(null);
+  const activeRef = useRef<number | null>(null);
+
+  // The picture being pointed at or focused on, for the label and the screen reader list.
+  const [active, setActive] = useState<number | null>(null);
+  // Circular order, so Tab and the arrow keys follow the galaxy's own sweep.
+  const order = useMemo(() => pictureTabOrder(images.length), [images.length]);
 
   useEffect(() => {
     const prev = prevFocusedIndexRef.current;
@@ -72,23 +91,31 @@ export function GalaxyHero({
     let flyProgress = 0;
     let flyTargetIdx: number | null = null;
     let frozenRotY = 0;
-    let frozenRotX = 0;
     let flyInNotified = false;
     let rotVelY = BASE_SPIN;
-    let rotVelX = 0;
-    let appliedProgress = -1;
     let isDragging = false;
     let dragDistance = 0;
-    let prevMouse = { x: 0, y: 0 };
+    let prevX = 0;
     let lastMoveTime = 0;
     let hadMultiPointer = false;
     let pinchStartDistance = 0;
-    let pinchStartCameraDistance = 0;
+    let pinchStartZoom = 1;
+    let zoom = 1;
     const activePointers = new Map<number, { x: number; y: number }>();
     const helperCam = new THREE.PerspectiveCamera();
     const homeLook = new THREE.Vector3(0, 0, 0);
 
     let galaxy!: GalaxyScene;
+
+    // Highlights one picture. Keeps the scene, the label and React in step.
+    const highlight = (index: number | null, nextTilt = { x: 0, y: 0 }, ring = false) => {
+      galaxy.setHover(index, nextTilt, ring);
+      if (activeRef.current !== index) {
+        activeRef.current = index;
+        setActive(index);
+      }
+    };
+    highlightRef.current = highlight;
 
     const zoomCameraToDistance = (distance: number) => {
       const next = THREE.MathUtils.clamp(distance, MIN_CAMERA_DISTANCE, MAX_CAMERA_DISTANCE);
@@ -121,10 +148,8 @@ export function GalaxyHero({
             targetCamPos = target.camPos;
             targetLookAt = target.lookAt;
             rotVelY = 0;
-            rotVelX = 0;
             targetRotVel = 0;
             frozenRotY = group.rotation.y;
-            frozenRotX = group.rotation.x;
             vignetteTarget = 0;
             flyProgress = 0;
             flyInNotified = false;
@@ -141,30 +166,25 @@ export function GalaxyHero({
         }
       }
 
-      // ── Rotation ──
+      // ── Rotation: horizontal drags turn the disc, with momentum. Vertical movement stays with the page. ──
       if (state === "IDLE" && !isDragging) {
         rotVelY = springLerp(rotVelY, BASE_SPIN, 1.2, dt);
-        rotVelX *= Math.exp(-3 * dt);
         group.rotation.y += rotVelY * dt;
-        group.rotation.x = THREE.MathUtils.clamp(group.rotation.x + rotVelX * dt, -SPIN_LIMIT_X, SPIN_LIMIT_X);
       } else if (state === "FLYING_IN" || state === "FOCUSED") {
         group.rotation.y = springLerp(group.rotation.y, frozenRotY, 8, dt);
-        group.rotation.x = springLerp(group.rotation.x, frozenRotX, 8, dt);
         rotVelY = 0;
-        rotVelX = 0;
       } else if (state === "FLYING_OUT") {
         rotVelY = springLerp(rotVelY, targetRotVel, 2, dt);
-        rotVelX = springLerp(rotVelX, 0, 2, dt);
         group.rotation.y += rotVelY * dt;
-        group.rotation.x = THREE.MathUtils.clamp(group.rotation.x + rotVelX * dt, -SPIN_LIMIT_X, SPIN_LIMIT_X);
       }
+      group.rotation.x = springLerp(group.rotation.x, 0, 6, dt);
 
-      // ── Scroll: the page decides how far the camera has moved into the galaxy ──
-      const progress = scrollProgressRef?.current ?? 0;
-      if (state === "IDLE" && progress !== appliedProgress) {
-        appliedProgress = progress;
+      // ── Scroll and pinch: the page scroll sets the distance, and pinch scales it within limits ──
+      if (state === "IDLE") {
+        const progress = scrollProgressRef?.current ?? 0;
         const eased = progress * progress * (3 - 2 * progress);
-        zoomCameraToDistance(THREE.MathUtils.lerp(galaxy.framingDistance, IMMERSED_DISTANCE, eased));
+        const base = THREE.MathUtils.lerp(galaxy.framingDistance, IMMERSED_DISTANCE, eased);
+        zoomCameraToDistance(base * zoom);
       }
 
       // ── Camera fly-in ──
@@ -210,7 +230,6 @@ export function GalaxyHero({
         flyProgress = springLerp(flyProgress, 1, flySpeed, dt);
         if (camera.position.distanceTo(targetCamPos) < 0.15 && flyProgress > 0.92) {
           state = "IDLE";
-          appliedProgress = -1;
           camera.position.copy(galaxy.homePosition());
           camera.lookAt(homeLook);
           flyTargetIdx = null;
@@ -242,34 +261,51 @@ export function GalaxyHero({
       const forward = new THREE.Vector3(0, 0, -1).applyQuaternion(camera.quaternion);
       veil.position.copy(camera.position).add(forward.multiplyScalar(0.11));
       veil.quaternion.copy(camera.quaternion);
+
+      // ── Label: follows the highlighted picture on screen ──
+      const label = labelRef.current;
+      if (label) {
+        const index = activeRef.current;
+        const point = index !== null && state === "IDLE" ? galaxy.projectPicture(index) : null;
+        if (point && !point.behind) {
+          label.style.transform = `translate(${point.x}px, ${point.y}px)`;
+          label.style.opacity = "1";
+        } else {
+          label.style.opacity = "0";
+        }
+      }
     };
 
     galaxy = new GalaxyScene(container, images, { onFrame });
     galaxy.camera.position.copy(galaxy.homePosition());
     galaxy.camera.lookAt(homeLook);
 
-    // ── Input: the page owns vertical scroll. Pointers only turn the galaxy, pinch, and pick. ──
+    // ── Input ──
+    // Vertical movement belongs to the page. These handlers turn the disc sideways, pinch, pick and highlight.
     const el = galaxy.domElement;
     el.style.cursor = "grab";
 
-    const beginPinch = () => {
+    const pinchDistance = () => {
       const [a, b] = Array.from(activePointers.values());
-      pinchStartDistance = a && b ? Math.hypot(a.x - b.x, a.y - b.y) : 0;
-      pinchStartCameraDistance = galaxy.camera.position.length();
+      return a && b ? Math.hypot(a.x - b.x, a.y - b.y) : 0;
+    };
+
+    const beginPinch = () => {
+      pinchStartDistance = pinchDistance();
+      pinchStartZoom = zoom;
       hadMultiPointer = true;
       isDragging = false;
       dragDistance = 8;
-      rotVelX = 0;
       rotVelY = 0;
+      highlight(null);
     };
 
     const updatePinch = () => {
-      const [a, b] = Array.from(activePointers.values());
-      if (!a || !b || pinchStartDistance <= 0) return;
-      const current = Math.hypot(a.x - b.x, a.y - b.y);
-      if (current <= 0) return;
+      const current = pinchDistance();
+      if (current <= 0 || pinchStartDistance <= 0) return;
       const ratio = pinchStartDistance / current;
-      zoomCameraToDistance(pinchStartCameraDistance * Math.pow(ratio, PINCH_ZOOM_SENSITIVITY));
+      const scaled = pinchStartZoom * Math.pow(ratio, PINCH_ZOOM_SENSITIVITY);
+      zoom = THREE.MathUtils.clamp(scaled, MIN_ZOOM, MAX_ZOOM);
     };
 
     const onPointerDown = (e: PointerEvent) => {
@@ -287,8 +323,9 @@ export function GalaxyHero({
       hadMultiPointer = false;
       isDragging = true;
       dragDistance = 0;
-      prevMouse = { x: e.clientX, y: e.clientY };
+      prevX = e.clientX;
       lastMoveTime = performance.now();
+      highlight(null);
     };
 
     const onPointerMove = (e: PointerEvent) => {
@@ -302,20 +339,16 @@ export function GalaxyHero({
       }
       if (!isDragging || activePointers.size !== 1) return;
 
-      const dx = e.clientX - prevMouse.x;
-      const dy = e.clientY - prevMouse.y;
-      dragDistance += Math.abs(dx) + Math.abs(dy);
-      const group = galaxy.group;
-      group.rotation.y += dx * DRAG_RADIANS_PER_PIXEL;
-      group.rotation.x = THREE.MathUtils.clamp(group.rotation.x + dy * DRAG_RADIANS_PER_PIXEL, -SPIN_LIMIT_X, SPIN_LIMIT_X);
+      const dx = e.clientX - prevX;
+      dragDistance += Math.abs(dx) + Math.abs(e.movementY);
+      galaxy.group.rotation.y += dx * DRAG_RADIANS_PER_PIXEL;
 
       // Momentum after release comes from the speed of the last movement.
       const now = performance.now();
       const seconds = Math.max((now - lastMoveTime) / 1000, 0.008);
       rotVelY = (dx * DRAG_RADIANS_PER_PIXEL) / seconds;
-      rotVelX = (dy * DRAG_RADIANS_PER_PIXEL) / seconds;
       lastMoveTime = now;
-      prevMouse = { x: e.clientX, y: e.clientY };
+      prevX = e.clientX;
     };
 
     const finishPointer = (e: PointerEvent, allowClick: boolean) => {
@@ -340,19 +373,33 @@ export function GalaxyHero({
     const onPointerUp = (e: PointerEvent) => finishPointer(e, true);
     const onPointerCancel = (e: PointerEvent) => finishPointer(e, false);
     const onPointerLeave = (e: PointerEvent) => {
-      if (e.pointerType === "mouse") finishPointer(e, false);
+      if (e.pointerType === "mouse") {
+        finishPointer(e, false);
+        highlight(null);
+      }
     };
+
+    // Hover is for mouse pointers only. Touch has no hover, so nothing sticks after a tap.
     const onHoverMove = (e: PointerEvent) => {
       if (e.pointerType !== "mouse") return;
       if (state !== "IDLE") {
         el.style.cursor = "default";
+        highlight(null);
         return;
       }
       if (isDragging) {
         el.style.cursor = "grabbing";
+        highlight(null);
         return;
       }
-      el.style.cursor = galaxy.pick(e.clientX, e.clientY) !== null ? "pointer" : "grab";
+      const index = galaxy.pick(e.clientX, e.clientY);
+      el.style.cursor = index !== null ? "pointer" : "grab";
+      const rect = el.getBoundingClientRect();
+      const nextTilt = {
+        x: ((e.clientX - rect.left) / rect.width) * 2 - 1,
+        y: -((e.clientY - rect.top) / rect.height) * 2 + 1,
+      };
+      highlight(index, nextTilt, false);
     };
 
     el.addEventListener("pointerdown", onPointerDown);
@@ -371,9 +418,58 @@ export function GalaxyHero({
       el.removeEventListener("pointerup", onPointerUp);
       el.removeEventListener("pointercancel", onPointerCancel);
       el.removeEventListener("pointerleave", onPointerLeave);
+      highlightRef.current = () => {};
+      activeRef.current = null;
       galaxy.dispose();
     };
   }, [images]);
 
-  return <div ref={containerRef} className="absolute inset-0" style={{ touchAction: "pan-y" }} />;
+  // Keyboard: arrow keys and Home and End move through the pieces in circular order. Enter opens one.
+  const onListKeyDown = (event: KeyboardEvent<HTMLButtonElement>, index: number) => {
+    const position = order.indexOf(index);
+    let next: number | null = null;
+    if (event.key === "ArrowRight" || event.key === "ArrowDown") next = order[(position + 1) % order.length];
+    else if (event.key === "ArrowLeft" || event.key === "ArrowUp") next = order[(position - 1 + order.length) % order.length];
+    else if (event.key === "Home") next = order[0];
+    else if (event.key === "End") next = order[order.length - 1];
+    if (next !== null) {
+      event.preventDefault();
+      buttonRefs.current[next]?.focus();
+    }
+  };
+
+  const activeLabel = active !== null ? titles[active] : "";
+  const activeCount = active !== null ? `${pad(active + 1)} / ${pad(titles.length)}` : "";
+
+  return (
+    <div ref={containerRef} className="absolute inset-0" style={{ touchAction: "pan-y" }}>
+      {/* The label follows the highlighted picture. It is decoration; the list below carries the names. */}
+      <div ref={labelRef} aria-hidden="true" className="pointer-events-none absolute left-0 top-0 z-30 opacity-0 transition-opacity duration-300">
+        <div className="-translate-x-1/2 -translate-y-full -mt-5 flex flex-col items-center gap-1 whitespace-nowrap">
+          <span className="text-[10px] font-mono text-cyan-300/80 tracking-widest uppercase">{activeCount}</span>
+          <span className="text-xl text-white" style={{ fontFamily: "'Instrument Serif', serif" }}>{activeLabel}</span>
+        </div>
+      </div>
+
+      {/* The pieces, for screen readers and the keyboard. Visually hidden; the highlight on the galaxy shows focus. */}
+      <ul aria-label="The pieces" className="sr-only">
+        {order.map((index) => (
+          <li key={index}>
+            <button
+              ref={(el) => {
+                buttonRefs.current[index] = el;
+              }}
+              type="button"
+              onFocus={() => highlightRef.current(index, { x: 0, y: 0 }, true)}
+              onBlur={() => highlightRef.current(null)}
+              onKeyDown={(event) => onListKeyDown(event, index)}
+              onClick={() => onImageClickRef.current?.(index)}
+            >
+              {`${pad(index + 1)} of ${pad(titles.length)}: ${titles[index]}`}
+            </button>
+          </li>
+        ))}
+      </ul>
+    </div>
+  );
 }

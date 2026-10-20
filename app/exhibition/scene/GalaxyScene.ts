@@ -1,5 +1,5 @@
 import * as THREE from "three";
-import { DISC_LAYERS, discLayerPoints, placePictures, type DiscLayer } from "./layout";
+import { DISC_LAYERS, discLayerPoints, homeDirection, placePictures, type DiscLayer } from "./layout";
 import { fullscreenVertex, nebulaFragment, pointFragment, pointVertex } from "./shaders";
 
 /** How much detail the scene draws. Steps down when a device cannot hold its frame rate. */
@@ -20,19 +20,27 @@ const FOV_LANDSCAPE = 40;
 const PHONE_HALF_WIDTH = 3.4;
 const BASE_HOME_DISTANCE = 12.5;
 const MAX_HOME_DISTANCE = 22;
-/** Steep enough that the spiral arms read. A low angle turns the disc into a thin band. */
-const PITCH = THREE.MathUtils.degToRad(24);
-const AZIMUTH = -Math.PI / 4;
 
 export const PICTURE_WIDTH = 1.35;
 const SQRT2 = Math.SQRT2;
+/** How far a hovered picture lifts towards the visitor, in world units. */
+const HOVER_LIFT = 0.3;
+/** Largest tilt, in radians, a hovered picture turns towards the pointer. */
+const HOVER_TILT = 0.12;
 
 export interface ScenePicture {
   index: number;
+  /** Positions the picture on the disc and carries its lift. Its facing is set by `lookAt`. */
+  anchor: THREE.Group;
   mesh: THREE.Mesh;
   halo: THREE.Mesh;
   /** Width divided by height. Stays at 1 : √2 until the picture's own texture has loaded. */
   aspect: number;
+  /** Where the picture rests on the disc, and the direction it faces. */
+  base: THREE.Vector3;
+  normal: THREE.Vector3;
+  /** 0 at rest, 1 when hovered or focused. Eased every frame. */
+  hover: number;
 }
 
 export interface GalaxySceneOptions {
@@ -78,7 +86,8 @@ function initialTier(): QualityTier {
 
 /**
  * The galaxy: one WebGL context, one render loop and no input handling. The caller turns the disc,
- * moves the camera and decides what a click means. This class draws what it is told to draw.
+ * moves the camera, decides what a click means, and says which picture is highlighted. This class
+ * draws what it is told to draw.
  */
 export class GalaxyScene {
   readonly camera: THREE.PerspectiveCamera;
@@ -115,14 +124,18 @@ export class GalaxyScene {
   private warmupFrames = 0;
   private sampledFrames = 0;
   private sampledMs = 0;
+  private hoveredIndex: number | null = null;
+  private hoverTilt = { x: 0, y: 0 };
+  private hoverRing = false;
   private resizeObserver: ResizeObserver | null = null;
   private visibilityObserver: IntersectionObserver | null = null;
 
   constructor(container: HTMLElement, images: string[], options: GalaxySceneOptions = {}) {
     this.options = options;
     this.container = container;
-    this.fixedStep = new URLSearchParams(window.location.search).has("fixedstep");
-    this.forcedTier = new URLSearchParams(window.location.search).has("quality");
+    const params = new URLSearchParams(window.location.search);
+    this.fixedStep = params.has("fixedstep");
+    this.forcedTier = params.has("quality");
     this.tier = initialTier();
 
     this.renderer = new THREE.WebGLRenderer({ antialias: true, alpha: false, powerPreference: "high-performance" });
@@ -159,11 +172,8 @@ export class GalaxyScene {
   /** The camera's home position, on the screen's framing distance. */
   homePosition(): THREE.Vector3 {
     const d = this.homeDistance;
-    return new THREE.Vector3(
-      Math.sin(AZIMUTH) * Math.cos(PITCH) * d,
-      Math.sin(PITCH) * d,
-      Math.cos(AZIMUTH) * Math.cos(PITCH) * d
-    );
+    const [x, y, z] = homeDirection();
+    return new THREE.Vector3(x * d, y * d, z * d);
   }
 
   get quality(): QualityTier {
@@ -184,18 +194,37 @@ export class GalaxyScene {
     this.clock.stop();
   }
 
+  /**
+   * Highlights one picture. It lifts, tilts towards `tilt` (normalised pointer position, -1 to 1),
+   * and glows brighter when `ring` is set, which is how keyboard focus shows.
+   */
+  setHover(index: number | null, tilt: { x: number; y: number } = { x: 0, y: 0 }, ring = false): void {
+    this.hoveredIndex = index;
+    this.hoverTilt = tilt;
+    this.hoverRing = ring;
+  }
+
   /** The picture under a pointer, or null. */
   pick(clientX: number, clientY: number): number | null {
     const rect = this.domElement.getBoundingClientRect();
     if (rect.width === 0 || rect.height === 0) return null;
-    const ndc = new THREE.Vector2(
-      ((clientX - rect.left) / rect.width) * 2 - 1,
-      -((clientY - rect.top) / rect.height) * 2 + 1
-    );
+    const ndc = this.toNdc(clientX, clientY);
     this.raycaster.setFromCamera(ndc, this.camera);
     const hit = this.raycaster.intersectObjects(this.pictures.map((p) => p.mesh), false)[0];
     if (!hit) return null;
     return this.pictures.find((p) => p.mesh === hit.object)?.index ?? null;
+  }
+
+  /** Where a picture is on the screen, in CSS pixels from the top-left of the canvas. */
+  projectPicture(index: number): { x: number; y: number; behind: boolean } | null {
+    const picture = this.pictures[index];
+    if (!picture) return null;
+    const point = picture.anchor.getWorldPosition(new THREE.Vector3()).project(this.camera);
+    return {
+      x: ((point.x + 1) / 2) * this.width,
+      y: ((1 - point.y) / 2) * this.height,
+      behind: point.z > 1,
+    };
   }
 
   /** Where a picture sits in the world right now, with its facing and size. */
@@ -203,9 +232,9 @@ export class GalaxyScene {
     const picture = this.pictures[index];
     if (!picture) return null;
     this.group.updateMatrixWorld(true);
-    const quaternion = picture.mesh.getWorldQuaternion(new THREE.Quaternion());
+    const quaternion = picture.anchor.getWorldQuaternion(new THREE.Quaternion());
     return {
-      position: picture.mesh.getWorldPosition(new THREE.Vector3()),
+      position: picture.anchor.getWorldPosition(new THREE.Vector3()),
       normal: new THREE.Vector3(0, 0, 1).applyQuaternion(quaternion),
       quaternion,
       width: PICTURE_WIDTH,
@@ -240,6 +269,14 @@ export class GalaxyScene {
     this.renderer.dispose();
     this.renderer.forceContextLoss();
     if (this.domElement.parentElement === this.container) this.container.removeChild(this.domElement);
+  }
+
+  private toNdc(clientX: number, clientY: number): THREE.Vector2 {
+    const rect = this.domElement.getBoundingClientRect();
+    return new THREE.Vector2(
+      ((clientX - rect.left) / rect.width) * 2 - 1,
+      -((clientY - rect.top) / rect.height) * 2 + 1
+    );
   }
 
   // ── Construction ─────────────────────────────────────────────────────────
@@ -278,20 +315,23 @@ export class GalaxyScene {
   }
 
   private buildPictures(images: string[]): void {
-    const facing = this.homePosition().normalize();
-    const placements = placePictures(images.length, [facing.x, facing.y, facing.z]);
+    const [fx, fy, fz] = homeDirection();
+    const placements = placePictures(images.length, [fx, fy, fz]);
     images.forEach((url, index) => {
       const placement = placements[index];
-      const geometry = new THREE.PlaneGeometry(PICTURE_WIDTH, (PICTURE_WIDTH * SQRT2));
-      const mesh = new THREE.Mesh(
-        geometry,
-        new THREE.MeshBasicMaterial({ color: 0xffffff, transparent: true, opacity: 0.96, side: THREE.DoubleSide })
-      );
       const [px, py, pz] = placement.position;
       const [nx, ny, nz] = placement.normal;
-      mesh.position.set(px, py, pz);
-      mesh.lookAt(px + nx, py + ny, pz + nz);
 
+      // The anchor carries the position and facing. The mesh and halo turn within it, so hover tilt
+      // never disturbs the picture's orientation.
+      const anchor = new THREE.Group();
+      anchor.position.set(px, py, pz);
+      anchor.lookAt(px + nx, py + ny, pz + nz);
+
+      const mesh = new THREE.Mesh(
+        new THREE.PlaneGeometry(PICTURE_WIDTH, PICTURE_WIDTH * SQRT2),
+        new THREE.MeshBasicMaterial({ color: 0xffffff, transparent: true, opacity: 0.96, side: THREE.DoubleSide })
+      );
       const halo = new THREE.Mesh(
         new THREE.PlaneGeometry(1, 1),
         new THREE.MeshBasicMaterial({
@@ -304,13 +344,22 @@ export class GalaxyScene {
           side: THREE.DoubleSide,
         })
       );
-      halo.position.set(px - nx * 0.04, py - ny * 0.04, pz - nz * 0.04);
-      halo.quaternion.copy(mesh.quaternion);
+      halo.position.set(0, 0, -0.04);
       halo.scale.set(PICTURE_WIDTH * 2.2, PICTURE_WIDTH * SQRT2 * 2.2, 1);
+      anchor.add(halo);
+      anchor.add(mesh);
+      this.group.add(anchor);
 
-      this.group.add(halo);
-      this.group.add(mesh);
-      this.pictures.push({ index, mesh, halo, aspect: 1 / SQRT2 });
+      this.pictures.push({
+        index,
+        anchor,
+        mesh,
+        halo,
+        aspect: 1 / SQRT2,
+        base: new THREE.Vector3(px, py, pz),
+        normal: new THREE.Vector3(nx, ny, nz),
+        hover: 0,
+      });
 
       this.loader.crossOrigin = "anonymous";
       this.loader.load(
@@ -471,6 +520,23 @@ export class GalaxyScene {
     }
   }
 
+  /** Eases each picture's lift, tilt and glow towards its hover state. */
+  private updateHover(dt: number): void {
+    const ease = 1 - Math.exp(-9 * dt);
+    for (const picture of this.pictures) {
+      const target = picture.index === this.hoveredIndex ? 1 : 0;
+      picture.hover += (target - picture.hover) * ease;
+      const h = picture.hover;
+
+      picture.anchor.position.copy(picture.base).addScaledVector(picture.normal, HOVER_LIFT * h);
+      picture.mesh.rotation.set(-this.hoverTilt.y * HOVER_TILT * h, this.hoverTilt.x * HOVER_TILT * h, 0);
+
+      const halo = picture.halo.material as THREE.MeshBasicMaterial;
+      const ring = picture.index === this.hoveredIndex && this.hoverRing ? 0.55 : 0;
+      halo.opacity = 0.3 + 0.35 * h + ring * h;
+    }
+  }
+
   private tick = (): void => {
     if (!this.running) return;
     this.frameId = requestAnimationFrame(this.tick);
@@ -485,6 +551,7 @@ export class GalaxyScene {
     this.nebula.uniforms.uTime.value = this.elapsed;
 
     this.options.onFrame?.(dt, this.elapsed);
+    this.updateHover(dt);
     this.sample(realSeconds);
     this.render();
   };
@@ -505,3 +572,4 @@ export class GalaxyScene {
     renderer.render(this.scene, this.camera);
   }
 }
+

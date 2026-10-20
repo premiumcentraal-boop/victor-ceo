@@ -14,6 +14,21 @@ export function seededRandom(seed: number): () => number {
 
 const TAU = Math.PI * 2;
 
+/** The visitor's home view: how far above the disc, and from which side, the camera sits. */
+export const VIEW = {
+  pitch: (24 * Math.PI) / 180,
+  azimuth: -Math.PI / 4,
+} as const;
+
+/** The unit direction from the centre to the camera's home position. */
+export function homeDirection(): [number, number, number] {
+  return [
+    Math.sin(VIEW.azimuth) * Math.cos(VIEW.pitch),
+    Math.sin(VIEW.pitch),
+    Math.cos(VIEW.azimuth) * Math.cos(VIEW.pitch),
+  ];
+}
+
 /** The disc: two or three logarithmic arms that wind outward from a warm core. */
 export const GALAXY = {
   arms: 3,
@@ -114,6 +129,19 @@ export interface PicturePlacement {
   position: [number, number, number];
   /** Unit vector the picture faces: outwards from the core, tilted slightly upwards. */
   normal: [number, number, number];
+}
+
+/**
+ * The order a visitor moves through the pieces with the keyboard: around the disc, not by number,
+ * so Tab follows the galaxy's own sweep.
+ */
+export function pictureTabOrder(count: number): number[] {
+  const placements = placePictures(count, homeDirection());
+  return placements
+    .map((placement, index) => ({ index, angle: Math.atan2(placement.position[2], placement.position[0]) }))
+    .map(({ index, angle }) => ({ index, angle: (angle + TAU) % TAU }))
+    .sort((a, b) => a.angle - b.angle)
+    .map(({ index }) => index);
 }
 
 /**
