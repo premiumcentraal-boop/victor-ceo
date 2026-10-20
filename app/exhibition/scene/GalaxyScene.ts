@@ -41,6 +41,8 @@ export interface ScenePicture {
   normal: THREE.Vector3;
   /** 0 at rest, 1 when hovered or focused. Eased every frame. */
   hover: number;
+  /** 0 normally, 1 when another picture is in focus. Eased every frame. */
+  dim: number;
 }
 
 export interface GalaxySceneOptions {
@@ -94,8 +96,6 @@ export class GalaxyScene {
   /** The disc and its pictures. The caller turns it. */
   readonly group = new THREE.Group();
   readonly pictures: ScenePicture[] = [];
-  /** Full-screen overlay for fades. The caller places it in front of the camera. */
-  readonly veil: THREE.Mesh;
   readonly domElement: HTMLCanvasElement;
 
   private readonly options: GalaxySceneOptions;
@@ -127,6 +127,8 @@ export class GalaxyScene {
   private hoveredIndex: number | null = null;
   private hoverTilt = { x: 0, y: 0 };
   private hoverRing = false;
+  private focusedIndex: number | null = null;
+  private lensFov = FOV_LANDSCAPE;
   private resizeObserver: ResizeObserver | null = null;
   private visibilityObserver: IntersectionObserver | null = null;
 
@@ -151,17 +153,15 @@ export class GalaxyScene {
 
     this.buildDisc();
     this.buildPictures(images);
-    this.veil = new THREE.Mesh(
-      new THREE.PlaneGeometry(2, 2),
-      new THREE.MeshBasicMaterial({ color: 0x000000, transparent: true, opacity: 0, depthTest: false, depthWrite: false })
-    );
-    this.veil.frustumCulled = false;
-    this.veil.renderOrder = 999;
-    this.scene.add(this.veil);
     this.nebula = this.buildNebula();
 
     this.resetSampling();
     this.observe();
+  }
+
+  /** The lens for the overview on this screen, in degrees. The focus move narrows from it. */
+  get baseFov(): number {
+    return this.lensFov;
   }
 
   /** Distance from the centre at which the disc is framed on this screen. */
@@ -192,6 +192,47 @@ export class GalaxyScene {
     this.running = false;
     cancelAnimationFrame(this.frameId);
     this.clock.stop();
+  }
+
+  /**
+   * Marks one picture as the one in focus. It stays lit, and the others dim, so the eye goes to it.
+   * Pass null to bring the whole disc back.
+   */
+  setFocus(index: number | null): void {
+    this.focusedIndex = index;
+  }
+
+  /**
+   * Shifts the view down by `pixels`, so the picture centres in the visible area below the header
+   * rather than in the middle of the whole screen. Pass 0 to clear it.
+   */
+  setViewShift(pixels: number): void {
+    if (pixels === 0) {
+      this.camera.clearViewOffset();
+    } else {
+      this.camera.setViewOffset(this.width, this.height, 0, -pixels, this.width, this.height);
+    }
+    this.camera.updateProjectionMatrix();
+  }
+
+  /** The picture's rectangle on screen, in CSS pixels, as the camera sees it right now. */
+  screenRect(index: number): { x: number; y: number; width: number; height: number } | null {
+    const picture = this.pictures[index];
+    if (!picture) return null;
+    this.group.updateMatrixWorld(true);
+    const halfW = PICTURE_WIDTH / 2;
+    const halfH = PICTURE_WIDTH / picture.aspect / 2;
+    const corners = [
+      new THREE.Vector3(-halfW, -halfH, 0),
+      new THREE.Vector3(halfW, -halfH, 0),
+      new THREE.Vector3(halfW, halfH, 0),
+      new THREE.Vector3(-halfW, halfH, 0),
+    ].map((c) => c.applyMatrix4(picture.anchor.matrixWorld).project(this.camera));
+    const xs = corners.map((c) => ((c.x + 1) / 2) * this.width);
+    const ys = corners.map((c) => ((1 - c.y) / 2) * this.height);
+    const x = Math.min(...xs);
+    const y = Math.min(...ys);
+    return { x, y, width: Math.max(...xs) - x, height: Math.max(...ys) - y };
   }
 
   /**
@@ -262,8 +303,6 @@ export class GalaxyScene {
     }
     this.textures.forEach((t) => t.dispose());
     this.haloTexture.dispose();
-    this.veil.geometry.dispose();
-    (this.veil.material as THREE.Material).dispose();
     this.nebula.target.dispose();
 
     this.renderer.dispose();
@@ -359,6 +398,7 @@ export class GalaxyScene {
         base: new THREE.Vector3(px, py, pz),
         normal: new THREE.Vector3(nx, ny, nz),
         hover: 0,
+        dim: 0,
       });
 
       this.loader.crossOrigin = "anonymous";
@@ -467,7 +507,8 @@ export class GalaxyScene {
 
     const aspect = width / height;
     this.camera.aspect = aspect;
-    this.camera.fov = aspect >= 1 ? FOV_LANDSCAPE : Math.min(66, FOV_LANDSCAPE + (1 - aspect) * 34);
+    this.lensFov = aspect >= 1 ? FOV_LANDSCAPE : Math.min(66, FOV_LANDSCAPE + (1 - aspect) * 34);
+    this.camera.fov = this.lensFov;
     this.camera.updateProjectionMatrix();
     const halfWidthPerUnit = Math.tan(THREE.MathUtils.degToRad(this.camera.fov / 2)) * aspect;
     this.homeDistance = THREE.MathUtils.clamp(
@@ -523,17 +564,21 @@ export class GalaxyScene {
   /** Eases each picture's lift, tilt and glow towards its hover state. */
   private updateHover(dt: number): void {
     const ease = 1 - Math.exp(-9 * dt);
+    const focusing = this.focusedIndex !== null;
     for (const picture of this.pictures) {
-      const target = picture.index === this.hoveredIndex ? 1 : 0;
-      picture.hover += (target - picture.hover) * ease;
+      const lit = picture.index === this.hoveredIndex || picture.index === this.focusedIndex;
+      picture.hover += ((lit ? 1 : 0) - picture.hover) * ease;
+      picture.dim += ((focusing && picture.index !== this.focusedIndex ? 1 : 0) - picture.dim) * ease;
       const h = picture.hover;
 
       picture.anchor.position.copy(picture.base).addScaledVector(picture.normal, HOVER_LIFT * h);
       picture.mesh.rotation.set(-this.hoverTilt.y * HOVER_TILT * h, this.hoverTilt.x * HOVER_TILT * h, 0);
 
+      const dimmed = 1 - 0.65 * picture.dim;
+      (picture.mesh.material as THREE.MeshBasicMaterial).opacity = 0.96 * dimmed;
       const halo = picture.halo.material as THREE.MeshBasicMaterial;
       const ring = picture.index === this.hoveredIndex && this.hoverRing ? 0.55 : 0;
-      halo.opacity = 0.3 + 0.35 * h + ring * h;
+      halo.opacity = (0.3 + 0.35 * h + ring * h) * dimmed;
     }
   }
 

@@ -2,6 +2,7 @@ import { useEffect, useMemo, useRef, useState, type KeyboardEvent, type MutableR
 import * as THREE from "three";
 import { GalaxyScene } from "./scene/GalaxyScene";
 import { pictureTabOrder } from "./scene/layout";
+import { FOCUS_DURATION, EXIT_DURATION, FocusMove, fitDistance, framedPose, type Pose } from "./camera/focus";
 
 type FlyState = "IDLE" | "FLYING_IN" | "FOCUSED" | "FLYING_OUT";
 
@@ -27,8 +28,11 @@ const PINCH_ZOOM_SENSITIVITY = 1.15;
 /** Pinch zoom is kept within this range of the scroll position's distance. */
 const MIN_ZOOM = 0.8;
 const MAX_ZOOM = 1.3;
-/** Temporary approach distance for the picture fly-in. Step 5 replaces this with the framed focus move. */
-const APPROACH_DISTANCE = 3.8;
+/** The focus move narrows the lens to this share of the overview lens, for a closer, more cinematic view. */
+const FOCUS_LENS = 0.85;
+const FOCUS_BULGE = 2.0;
+const EXIT_BULGE = 1.6;
+const UP = new THREE.Vector3(0, 1, 0);
 
 function springLerp(current: number, target: number, speed: number, dt: number): number {
   return current + (target - current) * (1 - Math.exp(-speed * dt));
@@ -36,6 +40,10 @@ function springLerp(current: number, target: number, speed: number, dt: number):
 
 function pad(n: number): string {
   return String(n).padStart(2, "0");
+}
+
+function headerHeight(): number {
+  return parseFloat(getComputedStyle(document.documentElement).getPropertyValue("--header-h")) || 0;
 }
 
 export function GalaxyHero({
@@ -84,15 +92,8 @@ export function GalaxyHero({
 
     // The frame loop and the input handlers share this state.
     let state: FlyState = "IDLE";
-    let targetCamPos = new THREE.Vector3();
-    let targetLookAt = new THREE.Vector3();
-    let targetRotVel = BASE_SPIN;
-    let vignetteTarget = 0;
-    let flyProgress = 0;
-    let flyTargetIdx: number | null = null;
-    let frozenRotY = 0;
-    let flyInNotified = false;
     let rotVelY = BASE_SPIN;
+    let frozenRotY = 0;
     let isDragging = false;
     let dragDistance = 0;
     let prevX = 0;
@@ -101,11 +102,18 @@ export function GalaxyHero({
     let pinchStartDistance = 0;
     let pinchStartZoom = 1;
     let zoom = 1;
+    let focusPicture: number | null = null;
+    let move: FocusMove | null = null;
+    let shiftApplied = 0;
     const activePointers = new Map<number, { x: number; y: number }>();
-    const helperCam = new THREE.PerspectiveCamera();
     const homeLook = new THREE.Vector3(0, 0, 0);
 
     let galaxy!: GalaxyScene;
+
+    const setState = (next: FlyState) => {
+      state = next;
+      container.dataset.focusState = next === "IDLE" ? "overview" : next.toLowerCase().replace("_", "-");
+    };
 
     // Highlights one picture. Keeps the scene, the label and React in step.
     const highlight = (index: number | null, nextTilt = { x: 0, y: 0 }, ring = false) => {
@@ -117,52 +125,89 @@ export function GalaxyHero({
     };
     highlightRef.current = highlight;
 
-    const zoomCameraToDistance = (distance: number) => {
-      const next = THREE.MathUtils.clamp(distance, MIN_CAMERA_DISTANCE, MAX_CAMERA_DISTANCE);
-      galaxy.camera.position.normalize().multiplyScalar(next);
-      galaxy.camera.lookAt(homeLook);
+    const applyPose = (pose: Pose) => {
+      const camera = galaxy.camera;
+      camera.position.copy(pose.position);
+      camera.quaternion.copy(pose.quaternion);
+      if (camera.fov !== pose.fov) {
+        camera.fov = pose.fov;
+        camera.updateProjectionMatrix();
+      }
     };
 
-    const computeFlyTarget = (idx: number) => {
-      const pose = galaxy.pictureWorldPose(idx);
-      if (!pose) return null;
+    const setShift = (pixels: number) => {
+      if (Math.abs(pixels - shiftApplied) < 0.01) return;
+      shiftApplied = pixels;
+      galaxy.setViewShift(pixels);
+    };
+
+    const currentPose = (): Pose => ({
+      position: galaxy.camera.position.clone(),
+      quaternion: galaxy.camera.quaternion.clone(),
+      fov: galaxy.camera.fov,
+    });
+
+    // Where the scroll position puts the camera in the overview.
+    const dollyPose = (): Pose => {
+      const progress = scrollProgressRef?.current ?? 0;
+      const eased = progress * progress * (3 - 2 * progress);
+      const distance = THREE.MathUtils.clamp(
+        THREE.MathUtils.lerp(galaxy.framingDistance, IMMERSED_DISTANCE, eased) * zoom,
+        MIN_CAMERA_DISTANCE,
+        MAX_CAMERA_DISTANCE
+      );
+      const position = galaxy.homePosition().normalize().multiplyScalar(distance);
+      const matrix = new THREE.Matrix4().lookAt(position, homeLook, UP);
       return {
-        camPos: pose.position.clone().add(pose.normal.clone().multiplyScalar(APPROACH_DISTANCE)),
-        lookAt: pose.position,
+        position,
+        quaternion: new THREE.Quaternion().setFromRotationMatrix(matrix),
+        fov: galaxy.baseFov,
       };
     };
 
+    // The pose that frames a picture: it fills most of the usable screen, level, straight on.
+    const focusPose = (index: number): Pose | null => {
+      const picture = galaxy.pictureWorldPose(index);
+      if (!picture) return null;
+      const viewportW = Math.max(1, container.clientWidth);
+      const viewportH = Math.max(1, container.clientHeight);
+      const fov = galaxy.baseFov * FOCUS_LENS;
+      const distance = fitDistance({
+        width: picture.width,
+        height: picture.height,
+        viewportAspect: viewportW / viewportH,
+        fovDeg: fov,
+        usableHeightFraction: (viewportH - headerHeight()) / viewportH,
+      });
+      const up = UP.clone().applyQuaternion(picture.quaternion);
+      return framedPose({ center: picture.position, normal: picture.normal, up, distance, fovDeg: fov });
+    };
+
+    const homePose = (): Pose => {
+      const position = galaxy.homePosition();
+      const matrix = new THREE.Matrix4().lookAt(position, homeLook, UP);
+      return { position, quaternion: new THREE.Quaternion().setFromRotationMatrix(matrix), fov: galaxy.baseFov };
+    };
+
     const onFrame = (dt: number) => {
-      const camera = galaxy.camera;
       const group = galaxy.group;
 
       // ── Commands from React ──
       const cmd = stateCommandRef.current;
       if (cmd) {
         stateCommandRef.current = null;
-        if (cmd.type === "FLY_IN" && cmd.index !== undefined && state === "IDLE") {
-          const target = computeFlyTarget(cmd.index);
-          if (target) {
-            state = "FLYING_IN";
-            flyTargetIdx = cmd.index;
-            targetCamPos = target.camPos;
-            targetLookAt = target.lookAt;
-            rotVelY = 0;
-            targetRotVel = 0;
-            frozenRotY = group.rotation.y;
-            vignetteTarget = 0;
-            flyProgress = 0;
-            flyInNotified = false;
-          }
-        } else if (cmd.type === "FLY_OUT" && (state === "FOCUSED" || state === "FLYING_IN")) {
-          state = "FLYING_OUT";
-          flyTargetIdx = null;
-          flyInNotified = false;
-          targetCamPos = galaxy.homePosition();
-          targetLookAt = homeLook.clone();
-          targetRotVel = BASE_SPIN;
-          vignetteTarget = 0;
-          flyProgress = 0;
+        if (cmd.type === "FLY_IN" && cmd.index !== undefined && (state === "IDLE" || state === "FLYING_OUT")) {
+          // A new picture can be chosen while the camera is still returning. The move starts from where it is.
+          focusPicture = cmd.index;
+          galaxy.setFocus(cmd.index);
+          frozenRotY = group.rotation.y;
+          rotVelY = 0;
+          move = new FocusMove(currentPose(), FOCUS_DURATION, FOCUS_BULGE);
+          setState("FLYING_IN");
+        } else if (cmd.type === "FLY_OUT" && (state === "FLYING_IN" || state === "FOCUSED")) {
+          galaxy.setFocus(null);
+          move = new FocusMove(currentPose(), EXIT_DURATION, EXIT_BULGE);
+          setState("FLYING_OUT");
         }
       }
 
@@ -174,93 +219,51 @@ export function GalaxyHero({
         group.rotation.y = springLerp(group.rotation.y, frozenRotY, 8, dt);
         rotVelY = 0;
       } else if (state === "FLYING_OUT") {
-        rotVelY = springLerp(rotVelY, targetRotVel, 2, dt);
+        rotVelY = springLerp(rotVelY, BASE_SPIN, 2, dt);
         group.rotation.y += rotVelY * dt;
       }
       group.rotation.x = springLerp(group.rotation.x, 0, 6, dt);
 
-      // ── Scroll and pinch: the page scroll sets the distance, and pinch scales it within limits ──
+      // ── The camera ──
+      const header = headerHeight();
       if (state === "IDLE") {
-        const progress = scrollProgressRef?.current ?? 0;
-        const eased = progress * progress * (3 - 2 * progress);
-        const base = THREE.MathUtils.lerp(galaxy.framingDistance, IMMERSED_DISTANCE, eased);
-        zoomCameraToDistance(base * zoom);
-      }
-
-      // ── Camera fly-in ──
-      if (state === "FLYING_IN") {
-        if (flyTargetIdx !== null) {
-          const live = computeFlyTarget(flyTargetIdx);
-          if (live) {
-            targetCamPos = live.camPos;
-            targetLookAt = live.lookAt;
+        applyPose(dollyPose());
+        setShift(0);
+      } else if (state === "FLYING_IN" && move && focusPicture !== null) {
+        const target = focusPose(focusPicture);
+        if (!target) {
+          setState("IDLE");
+        } else {
+          const { pose, done } = move.step(dt, target);
+          applyPose(pose);
+          setShift((header / 2) * move.progress);
+          if (done) {
+            applyPose(target);
+            setShift(header / 2);
+            setState("FOCUSED");
+            // Recorded for the tests: where the picture landed, on screen.
+            container.dataset.focusRect = JSON.stringify(galaxy.screenRect(focusPicture));
+            move = null;
+            onFlyInCompleteRef.current?.();
           }
         }
-        const flySpeed = 1.8;
-        camera.position.x = springLerp(camera.position.x, targetCamPos.x, flySpeed, dt);
-        camera.position.y = springLerp(camera.position.y, targetCamPos.y, flySpeed, dt);
-        camera.position.z = springLerp(camera.position.z, targetCamPos.z, flySpeed, dt);
-        helperCam.position.copy(camera.position);
-        helperCam.lookAt(targetLookAt);
-        camera.quaternion.slerp(helperCam.quaternion, 1 - Math.exp(-2.5 * dt));
-        flyProgress = springLerp(flyProgress, 1, flySpeed, dt);
-        vignetteTarget = flyProgress < 0.55 ? 0 : 1;
-
-        const veil = galaxy.veil.material as THREE.MeshBasicMaterial;
-        if (veil.opacity > 0.92 && !flyInNotified) {
-          flyInNotified = true;
-          state = "FOCUSED";
-          camera.position.copy(targetCamPos);
-          helperCam.position.copy(camera.position);
-          helperCam.lookAt(targetLookAt);
-          camera.quaternion.copy(helperCam.quaternion);
-          onFlyInCompleteRef.current?.();
-        }
-      }
-
-      // ── Camera fly-out ──
-      if (state === "FLYING_OUT") {
-        const flySpeed = 3.0;
-        camera.position.x = springLerp(camera.position.x, targetCamPos.x, flySpeed, dt);
-        camera.position.y = springLerp(camera.position.y, targetCamPos.y, flySpeed, dt);
-        camera.position.z = springLerp(camera.position.z, targetCamPos.z, flySpeed, dt);
-        helperCam.position.copy(camera.position);
-        helperCam.lookAt(targetLookAt);
-        camera.quaternion.slerp(helperCam.quaternion, 1 - Math.exp(-3.5 * dt));
-        flyProgress = springLerp(flyProgress, 1, flySpeed, dt);
-        if (camera.position.distanceTo(targetCamPos) < 0.15 && flyProgress > 0.92) {
-          state = "IDLE";
-          camera.position.copy(galaxy.homePosition());
-          camera.lookAt(homeLook);
-          flyTargetIdx = null;
+      } else if (state === "FOCUSED" && focusPicture !== null) {
+        const target = focusPose(focusPicture);
+        if (target) applyPose(target);
+        setShift(header / 2);
+      } else if (state === "FLYING_OUT" && move) {
+        const { pose, done } = move.step(dt, dollyPose());
+        applyPose(pose);
+        setShift((header / 2) * (1 - move.progress));
+        if (done) {
+          focusPicture = null;
+          move = null;
+          delete container.dataset.focusRect;
+          setShift(0);
+          setState("IDLE");
           onFlyOutCompleteRef.current?.();
         }
       }
-
-      // ── Focused: keep the camera on the picture ──
-      if (state === "FOCUSED" && flyTargetIdx !== null) {
-        const live = computeFlyTarget(flyTargetIdx);
-        if (live) {
-          camera.position.lerp(live.camPos, 1 - Math.exp(-6 * dt));
-          helperCam.position.copy(camera.position);
-          helperCam.lookAt(live.lookAt);
-          camera.quaternion.slerp(helperCam.quaternion, 1 - Math.exp(-6 * dt));
-        }
-      }
-
-      // ── Veil: fades the view to black during the fly-in, and back out again ──
-      const veil = galaxy.veil;
-      const veilMaterial = veil.material as THREE.MeshBasicMaterial;
-      if (state === "FOCUSED") {
-        vignetteTarget = 0;
-        veilMaterial.opacity = 0;
-      } else {
-        const speed = state === "FLYING_IN" ? 3.5 : 5;
-        veilMaterial.opacity = springLerp(veilMaterial.opacity, vignetteTarget, speed, dt);
-      }
-      const forward = new THREE.Vector3(0, 0, -1).applyQuaternion(camera.quaternion);
-      veil.position.copy(camera.position).add(forward.multiplyScalar(0.11));
-      veil.quaternion.copy(camera.quaternion);
 
       // ── Label: follows the highlighted picture on screen ──
       const label = labelRef.current;
@@ -279,6 +282,7 @@ export function GalaxyHero({
     galaxy = new GalaxyScene(container, images, { onFrame });
     galaxy.camera.position.copy(galaxy.homePosition());
     galaxy.camera.lookAt(homeLook);
+    setState("IDLE");
 
     // ── Input ──
     // Vertical movement belongs to the page. These handlers turn the disc sideways, pinch, pick and highlight.
@@ -304,8 +308,7 @@ export function GalaxyHero({
       const current = pinchDistance();
       if (current <= 0 || pinchStartDistance <= 0) return;
       const ratio = pinchStartDistance / current;
-      const scaled = pinchStartZoom * Math.pow(ratio, PINCH_ZOOM_SENSITIVITY);
-      zoom = THREE.MathUtils.clamp(scaled, MIN_ZOOM, MAX_ZOOM);
+      zoom = THREE.MathUtils.clamp(pinchStartZoom * Math.pow(ratio, PINCH_ZOOM_SENSITIVITY), MIN_ZOOM, MAX_ZOOM);
     };
 
     const onPointerDown = (e: PointerEvent) => {
