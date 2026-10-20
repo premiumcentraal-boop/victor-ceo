@@ -1,20 +1,9 @@
 import React, { useState, useCallback, useMemo, useRef } from "react";
-import { Cosmos3DOrbitGallery } from "../components/Cosmos3DOrbitGallery";
+import { GalaxyHero } from "../exhibition/GalaxyHero";
+import { galleryPictures as galleryImages, pictureSrc } from "../exhibition/data/pictures";
 import { AnimatePresence, motion, useMotionValueEvent, useScroll, useTransform } from "motion/react";
 import { ImageViewer } from "../components/ImageViewer";
-import { CosmicCometShader } from "../components/CosmicCometShader";
 import { useReducedMotion } from "../hooks/useReducedMotion";
-
-const galleryImages = [
-  { url: "https://res.cloudinary.com/doayhlzmx/image/upload/q_auto/f_auto/v1775520750/Synapses_2k_jpg_zwfdso.jpg", title: "Synapses" },
-  { url: "https://res.cloudinary.com/doayhlzmx/image/upload/q_auto/f_auto/v1775520749/New_beginnings_2k_jpg_si1uje.jpg", title: "New beginnings" },
-  { url: "https://res.cloudinary.com/doayhlzmx/image/upload/q_auto/f_auto/v1775520749/11.7_dhzshk.jpg", title: "11.7" },
-  { url: "https://res.cloudinary.com/doayhlzmx/image/upload/q_auto/f_auto/v1775520749/the_rising_2k_jpg_ozbdmt.jpg", title: "The rising" },
-  { url: "https://res.cloudinary.com/doayhlzmx/image/upload/q_auto/f_auto/v1775520749/a_leap_of_faith_2k_jpg_ny8nqg.jpg", title: "A leap of faith" },
-  { url: "https://res.cloudinary.com/doayhlzmx/image/upload/q_auto/f_auto/v1775520732/Budha_2k_jpg_z3xdyz.jpg", title: "Finally at peace" },
-  { url: "https://res.cloudinary.com/doayhlzmx/image/upload/q_auto/f_auto/v1775520743/reaching_m2ysyd.jpg", title: "Reaching for you" },
-  { url: "https://res.cloudinary.com/doayhlzmx/image/upload/q_auto/f_auto/v1775603942/lust_2k_jpg_wbhou2.jpg", title: "Lust" },
-];
 
 export function TheExhibition() {
   const [viewerIndex, setViewerIndex] = useState<number | null>(null);
@@ -23,7 +12,7 @@ export function TheExhibition() {
   const [immersed, setImmersed] = useState(false);
 
   // Stable reference — prevents Three.js scene from remounting on every render
-  const imageUrls = useMemo(() => galleryImages.map(g => g.url), []);
+  const imageUrls = useMemo(() => galleryImages.map(g => pictureSrc(g.url, "scene")), []);
 
   // ── Scroll scene ──
   // The hero is a scene the page scrolls through. The stage stays pinned while the scroll moves the camera.
@@ -118,14 +107,9 @@ export function TheExhibition() {
             style={{ background: "radial-gradient(ellipse at center, transparent 40%, rgba(1,1,1,0.7) 100%)" }}
           />
 
-          {/* Cosmic comet shader - deepest background layer */}
-          <div className="absolute inset-0 z-[1] opacity-60 pointer-events-none">
-            <CosmicCometShader />
-          </div>
-
-          {/* 3D Orbit Gallery - above shader */}
+          {/* The galaxy: its own nebula, disc and pictures */}
           <div className="absolute inset-0 z-[3]">
-            <Cosmos3DOrbitGallery
+            <GalaxyHero
               images={imageUrls}
               onImageClick={handleSphereClick}
               focusedIndex={focusedIndex}

@@ -1,0 +1,507 @@
+import * as THREE from "three";
+import { DISC_LAYERS, discLayerPoints, placePictures, type DiscLayer } from "./layout";
+import { fullscreenVertex, nebulaFragment, pointFragment, pointVertex } from "./shaders";
+
+/** How much detail the scene draws. Steps down when a device cannot hold its frame rate. */
+export type QualityTier = "high" | "medium" | "low";
+
+const TIERS: Record<QualityTier, { pixelRatio: number; nebula: number; density: number }> = {
+  high: { pixelRatio: 2, nebula: 1, density: 1 },
+  medium: { pixelRatio: 1.5, nebula: 0.5, density: 0.7 },
+  low: { pixelRatio: 1, nebula: 0, density: 0.4 },
+};
+const TIER_ORDER: QualityTier[] = ["high", "medium", "low"];
+
+/** Average frame time (ms) above which the scene steps down a tier. */
+const SLOW_FRAME_MS = 26;
+
+const FOV_LANDSCAPE = 40;
+/** On a portrait screen the disc is framed by its width, so this is the half-width kept in view. */
+const PHONE_HALF_WIDTH = 3.4;
+const BASE_HOME_DISTANCE = 12.5;
+const MAX_HOME_DISTANCE = 22;
+/** Steep enough that the spiral arms read. A low angle turns the disc into a thin band. */
+const PITCH = THREE.MathUtils.degToRad(24);
+const AZIMUTH = -Math.PI / 4;
+
+export const PICTURE_WIDTH = 1.35;
+const SQRT2 = Math.SQRT2;
+
+export interface ScenePicture {
+  index: number;
+  mesh: THREE.Mesh;
+  halo: THREE.Mesh;
+  /** Width divided by height. Stays at 1 : √2 until the picture's own texture has loaded. */
+  aspect: number;
+}
+
+export interface GalaxySceneOptions {
+  /** Called every frame, before rendering. `dt` is the simulated time since the last frame, in seconds. */
+  onFrame?: (dt: number, elapsed: number) => void;
+  /** Called when a picture's texture has loaded and its shape is known. */
+  onPictureReady?: (index: number) => void;
+}
+
+interface NebulaPass {
+  target: THREE.WebGLRenderTarget;
+  uniforms: { uTime: { value: number }; uResolution: { value: THREE.Vector2 }; uIntensity: { value: number } };
+  scene: THREE.Scene;
+  present: THREE.Scene;
+  camera: THREE.OrthographicCamera;
+}
+
+function makeHaloTexture(): THREE.CanvasTexture {
+  const canvas = document.createElement("canvas");
+  canvas.width = 128;
+  canvas.height = 128;
+  const ctx = canvas.getContext("2d");
+  if (ctx) {
+    const gradient = ctx.createRadialGradient(64, 64, 0, 64, 64, 64);
+    gradient.addColorStop(0, "rgba(255,255,255,0.9)");
+    gradient.addColorStop(0.45, "rgba(255,255,255,0.22)");
+    gradient.addColorStop(1, "rgba(255,255,255,0)");
+    ctx.fillStyle = gradient;
+    ctx.fillRect(0, 0, 128, 128);
+  }
+  return new THREE.CanvasTexture(canvas);
+}
+
+function initialTier(): QualityTier {
+  const forced = new URLSearchParams(window.location.search).get("quality");
+  if (forced === "high" || forced === "medium" || forced === "low") return forced;
+  const nav = navigator as Navigator & { deviceMemory?: number };
+  const constrained = (nav.hardwareConcurrency ?? 8) <= 4 || (nav.deviceMemory ?? 8) <= 4;
+  const mobile = /Mobi|Android|iPhone|iPad/i.test(navigator.userAgent);
+  if (constrained) return "low";
+  return mobile ? "medium" : "high";
+}
+
+/**
+ * The galaxy: one WebGL context, one render loop and no input handling. The caller turns the disc,
+ * moves the camera and decides what a click means. This class draws what it is told to draw.
+ */
+export class GalaxyScene {
+  readonly camera: THREE.PerspectiveCamera;
+  /** The disc and its pictures. The caller turns it. */
+  readonly group = new THREE.Group();
+  readonly pictures: ScenePicture[] = [];
+  /** Full-screen overlay for fades. The caller places it in front of the camera. */
+  readonly veil: THREE.Mesh;
+  readonly domElement: HTMLCanvasElement;
+
+  private readonly options: GalaxySceneOptions;
+  private readonly container: HTMLElement;
+  private readonly renderer: THREE.WebGLRenderer;
+  private readonly scene = new THREE.Scene();
+  private readonly raycaster = new THREE.Raycaster();
+  private readonly clock = new THREE.Clock(false);
+  private readonly loader = new THREE.TextureLoader();
+  private readonly haloTexture: THREE.CanvasTexture;
+  private readonly textures: THREE.Texture[] = [];
+  private readonly layers: { points: THREE.Points; material: THREE.ShaderMaterial; count: number; spin: number }[] = [];
+  private readonly nebula: NebulaPass;
+  private readonly fixedStep: boolean;
+  private readonly forcedTier: boolean;
+
+  private tier: QualityTier;
+  private width = 1;
+  private height = 1;
+  private homeDistance = BASE_HOME_DISTANCE;
+  private elapsed = 0;
+  private frameId = 0;
+  private running = false;
+  private onscreen = true;
+  private disposed = false;
+  private warmupFrames = 0;
+  private sampledFrames = 0;
+  private sampledMs = 0;
+  private resizeObserver: ResizeObserver | null = null;
+  private visibilityObserver: IntersectionObserver | null = null;
+
+  constructor(container: HTMLElement, images: string[], options: GalaxySceneOptions = {}) {
+    this.options = options;
+    this.container = container;
+    this.fixedStep = new URLSearchParams(window.location.search).has("fixedstep");
+    this.forcedTier = new URLSearchParams(window.location.search).has("quality");
+    this.tier = initialTier();
+
+    this.renderer = new THREE.WebGLRenderer({ antialias: true, alpha: false, powerPreference: "high-performance" });
+    this.renderer.autoClear = false;
+    this.renderer.setClearColor(0x010101, 1);
+    this.domElement = this.renderer.domElement;
+    this.domElement.style.display = "block";
+    container.appendChild(this.domElement);
+
+    this.camera = new THREE.PerspectiveCamera(FOV_LANDSCAPE, 1, 0.1, 100);
+    this.scene.add(this.group);
+    this.haloTexture = makeHaloTexture();
+
+    this.buildDisc();
+    this.buildPictures(images);
+    this.veil = new THREE.Mesh(
+      new THREE.PlaneGeometry(2, 2),
+      new THREE.MeshBasicMaterial({ color: 0x000000, transparent: true, opacity: 0, depthTest: false, depthWrite: false })
+    );
+    this.veil.frustumCulled = false;
+    this.veil.renderOrder = 999;
+    this.scene.add(this.veil);
+    this.nebula = this.buildNebula();
+
+    this.resetSampling();
+    this.observe();
+  }
+
+  /** Distance from the centre at which the disc is framed on this screen. */
+  get framingDistance(): number {
+    return this.homeDistance;
+  }
+
+  /** The camera's home position, on the screen's framing distance. */
+  homePosition(): THREE.Vector3 {
+    const d = this.homeDistance;
+    return new THREE.Vector3(
+      Math.sin(AZIMUTH) * Math.cos(PITCH) * d,
+      Math.sin(PITCH) * d,
+      Math.cos(AZIMUTH) * Math.cos(PITCH) * d
+    );
+  }
+
+  get quality(): QualityTier {
+    return this.tier;
+  }
+
+  /** Runs `onFrame` and renders on every frame, until `stop` or `dispose`. */
+  start(): void {
+    if (this.disposed || this.running) return;
+    this.running = true;
+    this.clock.start();
+    this.frameId = requestAnimationFrame(this.tick);
+  }
+
+  stop(): void {
+    this.running = false;
+    cancelAnimationFrame(this.frameId);
+    this.clock.stop();
+  }
+
+  /** The picture under a pointer, or null. */
+  pick(clientX: number, clientY: number): number | null {
+    const rect = this.domElement.getBoundingClientRect();
+    if (rect.width === 0 || rect.height === 0) return null;
+    const ndc = new THREE.Vector2(
+      ((clientX - rect.left) / rect.width) * 2 - 1,
+      -((clientY - rect.top) / rect.height) * 2 + 1
+    );
+    this.raycaster.setFromCamera(ndc, this.camera);
+    const hit = this.raycaster.intersectObjects(this.pictures.map((p) => p.mesh), false)[0];
+    if (!hit) return null;
+    return this.pictures.find((p) => p.mesh === hit.object)?.index ?? null;
+  }
+
+  /** Where a picture sits in the world right now, with its facing and size. */
+  pictureWorldPose(index: number): { position: THREE.Vector3; normal: THREE.Vector3; quaternion: THREE.Quaternion; width: number; height: number } | null {
+    const picture = this.pictures[index];
+    if (!picture) return null;
+    this.group.updateMatrixWorld(true);
+    const quaternion = picture.mesh.getWorldQuaternion(new THREE.Quaternion());
+    return {
+      position: picture.mesh.getWorldPosition(new THREE.Vector3()),
+      normal: new THREE.Vector3(0, 0, 1).applyQuaternion(quaternion),
+      quaternion,
+      width: PICTURE_WIDTH,
+      height: PICTURE_WIDTH / picture.aspect,
+    };
+  }
+
+  dispose(): void {
+    if (this.disposed) return;
+    this.stop();
+    this.disposed = true;
+    this.resizeObserver?.disconnect();
+    this.visibilityObserver?.disconnect();
+    document.removeEventListener("visibilitychange", this.updateRunning);
+
+    for (const layer of this.layers) {
+      layer.points.geometry.dispose();
+      layer.material.dispose();
+    }
+    for (const picture of this.pictures) {
+      picture.mesh.geometry.dispose();
+      (picture.mesh.material as THREE.Material).dispose();
+      picture.halo.geometry.dispose();
+      (picture.halo.material as THREE.Material).dispose();
+    }
+    this.textures.forEach((t) => t.dispose());
+    this.haloTexture.dispose();
+    this.veil.geometry.dispose();
+    (this.veil.material as THREE.Material).dispose();
+    this.nebula.target.dispose();
+
+    this.renderer.dispose();
+    this.renderer.forceContextLoss();
+    if (this.domElement.parentElement === this.container) this.container.removeChild(this.domElement);
+  }
+
+  // ── Construction ─────────────────────────────────────────────────────────
+
+  private buildDisc(): void {
+    const layerOrder: DiscLayer[] = ["dust", "stars", "core"];
+    const brightness: Record<DiscLayer, number> = { dust: 0.55, stars: 1.1, core: 1.35 };
+    const scale: Record<DiscLayer, number> = { dust: 2.2, stars: 2.8, core: 3.4 };
+    // The dust turns slowly against the disc. The difference reads as depth.
+    const spin: Record<DiscLayer, number> = { dust: -0.035, stars: 0, core: 0 };
+
+    for (const name of layerOrder) {
+      const data = discLayerPoints(name);
+      const geometry = new THREE.BufferGeometry();
+      geometry.setAttribute("position", new THREE.BufferAttribute(data.positions, 3));
+      geometry.setAttribute("aColor", new THREE.BufferAttribute(data.colors, 3));
+      geometry.setAttribute("aSize", new THREE.BufferAttribute(data.sizes, 1));
+      geometry.setAttribute("aSeed", new THREE.BufferAttribute(data.seeds, 1));
+      const material = new THREE.ShaderMaterial({
+        vertexShader: pointVertex,
+        fragmentShader: pointFragment,
+        uniforms: {
+          uPixelRatio: { value: this.renderer.getPixelRatio() },
+          uScale: { value: scale[name] },
+          uTime: { value: 0 },
+          uBrightness: { value: brightness[name] },
+        },
+        transparent: true,
+        depthWrite: false,
+        blending: THREE.AdditiveBlending,
+      });
+      const points = new THREE.Points(geometry, material);
+      this.group.add(points);
+      this.layers.push({ points, material, count: DISC_LAYERS[name].count, spin: spin[name] });
+    }
+  }
+
+  private buildPictures(images: string[]): void {
+    const facing = this.homePosition().normalize();
+    const placements = placePictures(images.length, [facing.x, facing.y, facing.z]);
+    images.forEach((url, index) => {
+      const placement = placements[index];
+      const geometry = new THREE.PlaneGeometry(PICTURE_WIDTH, (PICTURE_WIDTH * SQRT2));
+      const mesh = new THREE.Mesh(
+        geometry,
+        new THREE.MeshBasicMaterial({ color: 0xffffff, transparent: true, opacity: 0.96, side: THREE.DoubleSide })
+      );
+      const [px, py, pz] = placement.position;
+      const [nx, ny, nz] = placement.normal;
+      mesh.position.set(px, py, pz);
+      mesh.lookAt(px + nx, py + ny, pz + nz);
+
+      const halo = new THREE.Mesh(
+        new THREE.PlaneGeometry(1, 1),
+        new THREE.MeshBasicMaterial({
+          map: this.haloTexture,
+          color: 0x67e8f9,
+          transparent: true,
+          opacity: 0.3,
+          depthWrite: false,
+          blending: THREE.AdditiveBlending,
+          side: THREE.DoubleSide,
+        })
+      );
+      halo.position.set(px - nx * 0.04, py - ny * 0.04, pz - nz * 0.04);
+      halo.quaternion.copy(mesh.quaternion);
+      halo.scale.set(PICTURE_WIDTH * 2.2, PICTURE_WIDTH * SQRT2 * 2.2, 1);
+
+      this.group.add(halo);
+      this.group.add(mesh);
+      this.pictures.push({ index, mesh, halo, aspect: 1 / SQRT2 });
+
+      this.loader.crossOrigin = "anonymous";
+      this.loader.load(
+        url,
+        (texture) => this.onPictureTexture(index, texture),
+        undefined,
+        () => {
+          // A picture that fails to load keeps its place as a dark frame.
+        }
+      );
+    });
+  }
+
+  private onPictureTexture(index: number, texture: THREE.Texture): void {
+    if (this.disposed) {
+      texture.dispose();
+      return;
+    }
+    const picture = this.pictures[index];
+    const image = texture.image as HTMLImageElement | undefined;
+    const aspect = image && image.height ? image.width / image.height : 1 / SQRT2;
+    texture.colorSpace = THREE.SRGBColorSpace;
+    texture.anisotropy = Math.min(4, this.renderer.capabilities.getMaxAnisotropy());
+    this.textures.push(texture);
+
+    picture.aspect = aspect;
+    const height = PICTURE_WIDTH / aspect;
+    picture.mesh.geometry.dispose();
+    picture.mesh.geometry = new THREE.PlaneGeometry(PICTURE_WIDTH, height);
+    picture.halo.scale.set(PICTURE_WIDTH * 2.2, height * 2.2, 1);
+    (picture.mesh.material as THREE.MeshBasicMaterial).map = texture;
+    (picture.mesh.material as THREE.MeshBasicMaterial).needsUpdate = true;
+    this.options.onPictureReady?.(index);
+  }
+
+  private buildNebula(): NebulaPass {
+    const target = new THREE.WebGLRenderTarget(1, 1, { depthBuffer: false });
+    const uniforms = {
+      uTime: { value: 0 },
+      uResolution: { value: new THREE.Vector2(1, 1) },
+      uIntensity: { value: 1.7 },
+    };
+    const camera = new THREE.OrthographicCamera(-1, 1, 1, -1, 0, 1);
+
+    const scene = new THREE.Scene();
+    scene.add(
+      new THREE.Mesh(
+        new THREE.PlaneGeometry(2, 2),
+        new THREE.ShaderMaterial({ vertexShader: fullscreenVertex, fragmentShader: nebulaFragment, uniforms, depthTest: false, depthWrite: false })
+      )
+    );
+
+    const present = new THREE.Scene();
+    present.add(
+      new THREE.Mesh(
+        new THREE.PlaneGeometry(2, 2),
+        new THREE.ShaderMaterial({
+          vertexShader: fullscreenVertex,
+          fragmentShader: /* glsl */ `
+            uniform sampler2D tNebula;
+            varying vec2 vUv;
+            void main() { gl_FragColor = texture2D(tNebula, vUv); }
+          `,
+          uniforms: { tNebula: { value: target.texture } },
+          depthTest: false,
+          depthWrite: false,
+        })
+      )
+    );
+    return { target, uniforms, scene, present, camera };
+  }
+
+  // ── Frame, size and quality ──────────────────────────────────────────────
+
+  private observe(): void {
+    if (typeof ResizeObserver !== "undefined") {
+      this.resizeObserver = new ResizeObserver(() => this.resize());
+      this.resizeObserver.observe(this.container);
+    }
+    if (typeof IntersectionObserver !== "undefined") {
+      this.visibilityObserver = new IntersectionObserver(([entry]) => {
+        this.onscreen = entry ? entry.isIntersecting : true;
+        this.updateRunning();
+      });
+      this.visibilityObserver.observe(this.container);
+    }
+    document.addEventListener("visibilitychange", this.updateRunning);
+    this.resize();
+  }
+
+  /** Draws only while the hero is on screen and the tab is visible. */
+  private updateRunning = (): void => {
+    if (this.disposed) return;
+    const shouldRun = this.onscreen && !document.hidden;
+    if (shouldRun) this.start();
+    else this.stop();
+  };
+
+  private resize(): void {
+    const width = Math.max(1, this.container.clientWidth);
+    const height = Math.max(1, this.container.clientHeight);
+    if (width === this.width && height === this.height) return;
+    this.width = width;
+    this.height = height;
+
+    const aspect = width / height;
+    this.camera.aspect = aspect;
+    this.camera.fov = aspect >= 1 ? FOV_LANDSCAPE : Math.min(66, FOV_LANDSCAPE + (1 - aspect) * 34);
+    this.camera.updateProjectionMatrix();
+    const halfWidthPerUnit = Math.tan(THREE.MathUtils.degToRad(this.camera.fov / 2)) * aspect;
+    this.homeDistance = THREE.MathUtils.clamp(
+      Math.max(BASE_HOME_DISTANCE, PHONE_HALF_WIDTH / halfWidthPerUnit),
+      BASE_HOME_DISTANCE,
+      MAX_HOME_DISTANCE
+    );
+    this.camera.position.copy(this.homePosition());
+    this.camera.lookAt(0, 0, 0);
+    this.applyTier(this.tier);
+  }
+
+  private applyTier(tier: QualityTier): void {
+    this.tier = tier;
+    const settings = TIERS[tier];
+    this.renderer.setPixelRatio(Math.min(window.devicePixelRatio || 1, settings.pixelRatio));
+    this.renderer.setSize(this.width, this.height);
+    for (const layer of this.layers) {
+      layer.points.geometry.setDrawRange(0, Math.floor(layer.count * settings.density));
+      layer.material.uniforms.uPixelRatio.value = this.renderer.getPixelRatio();
+    }
+    const size = this.renderer.getDrawingBufferSize(new THREE.Vector2());
+    const nebulaW = Math.max(1, Math.floor(size.x * settings.nebula));
+    const nebulaH = Math.max(1, Math.floor(size.y * settings.nebula));
+    this.nebula.target.setSize(nebulaW, nebulaH);
+    this.nebula.uniforms.uResolution.value.set(nebulaW, nebulaH);
+  }
+
+  private resetSampling(): void {
+    this.warmupFrames = 0;
+    this.sampledFrames = 0;
+    this.sampledMs = 0;
+  }
+
+  /** Steps the quality down when the average frame is too slow. Never steps back up, so it cannot oscillate. */
+  private sample(realSeconds: number): void {
+    // A long gap is the tab waking or the hero returning to view, not a slow frame.
+    if (this.forcedTier || this.tier === "low" || realSeconds > 0.25) return;
+    this.warmupFrames++;
+    if (this.warmupFrames <= 45) return;
+    this.sampledFrames++;
+    this.sampledMs += realSeconds * 1000;
+    if (this.sampledFrames < 60) return;
+    const average = this.sampledMs / this.sampledFrames;
+    this.sampledFrames = 0;
+    this.sampledMs = 0;
+    if (average > SLOW_FRAME_MS) {
+      const next = TIER_ORDER[TIER_ORDER.indexOf(this.tier) + 1];
+      if (next) this.applyTier(next);
+    }
+  }
+
+  private tick = (): void => {
+    if (!this.running) return;
+    this.frameId = requestAnimationFrame(this.tick);
+    const realSeconds = this.clock.getDelta();
+    const dt = this.fixedStep ? 1 / 60 : Math.min(realSeconds, 0.05);
+    this.elapsed += dt;
+
+    for (const layer of this.layers) {
+      layer.material.uniforms.uTime.value = this.elapsed;
+      layer.points.rotation.y += layer.spin * dt;
+    }
+    this.nebula.uniforms.uTime.value = this.elapsed;
+
+    this.options.onFrame?.(dt, this.elapsed);
+    this.sample(realSeconds);
+    this.render();
+  };
+
+  private render(): void {
+    const renderer = this.renderer;
+    if (TIERS[this.tier].nebula > 0) {
+      renderer.setRenderTarget(this.nebula.target);
+      renderer.clear();
+      renderer.render(this.nebula.scene, this.nebula.camera);
+      renderer.setRenderTarget(null);
+      renderer.clear();
+      renderer.render(this.nebula.present, this.nebula.camera);
+    } else {
+      renderer.clear();
+    }
+    renderer.clearDepth();
+    renderer.render(this.scene, this.camera);
+  }
+}
