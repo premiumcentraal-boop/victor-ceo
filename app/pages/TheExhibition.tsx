@@ -1,8 +1,9 @@
-import React, { useState, useCallback, useMemo } from "react";
+import React, { useState, useCallback, useMemo, useRef } from "react";
 import { Cosmos3DOrbitGallery } from "../components/Cosmos3DOrbitGallery";
-import { AnimatePresence, motion } from "motion/react";
+import { AnimatePresence, motion, useMotionValueEvent, useScroll, useTransform } from "motion/react";
 import { ImageViewer } from "../components/ImageViewer";
 import { CosmicCometShader } from "../components/CosmicCometShader";
+import { useReducedMotion } from "../hooks/useReducedMotion";
 
 const galleryImages = [
   { url: "https://res.cloudinary.com/doayhlzmx/image/upload/q_auto/f_auto/v1775520750/Synapses_2k_jpg_zwfdso.jpg", title: "Synapses" },
@@ -19,9 +20,42 @@ export function TheExhibition() {
   const [viewerIndex, setViewerIndex] = useState<number | null>(null);
   const [focusedIndex, setFocusedIndex] = useState<number | null>(null);
   const [showViewer, setShowViewer] = useState(false);
+  const [immersed, setImmersed] = useState(false);
 
   // Stable reference — prevents Three.js scene from remounting on every render
   const imageUrls = useMemo(() => galleryImages.map(g => g.url), []);
+
+  // ── Scroll scene ──
+  // The hero is a scene the page scrolls through. The stage stays pinned while the scroll moves the camera.
+  const sceneRef = useRef<HTMLElement>(null);
+  const reducedMotion = useReducedMotion();
+  // Read by the galaxy's render loop every frame. A ref, so scrolling never re-renders React.
+  const scrollProgressRef = useRef(0);
+  const immersedRef = useRef(false);
+  const { scrollYProgress } = useScroll({ target: sceneRef, offset: ["start start", "end end"] });
+  useMotionValueEvent(scrollYProgress, "change", (value) => {
+    scrollProgressRef.current = value;
+    // React only hears about the switch between the two states, not every scroll frame.
+    const next = value > 0.9;
+    if (next !== immersedRef.current) {
+      immersedRef.current = next;
+      setImmersed(next);
+    }
+  });
+  const headlineOpacity = useTransform(scrollYProgress, [0, 0.45], [1, 0]);
+  const headlineY = useTransform(scrollYProgress, [0, 0.45], [0, -48]);
+  const cueOpacity = useTransform(scrollYProgress, [0, 0.12], [1, 0]);
+
+  // Tap in / tap out: scroll the page to the end or the top of the scene.
+  const toggleGalaxy = useCallback(() => {
+    const scene = sceneRef.current;
+    const stage = scene?.firstElementChild as HTMLElement | null | undefined;
+    if (!scene || !stage) return;
+    const sceneTop = scene.getBoundingClientRect().top + window.scrollY;
+    const travel = scene.offsetHeight - stage.offsetHeight;
+    const target = immersedRef.current ? sceneTop : sceneTop + travel;
+    window.scrollTo({ top: Math.max(0, target), behavior: reducedMotion ? "auto" : "smooth" });
+  }, [reducedMotion]);
 
   // 3D sphere click → fly camera in, then open viewer
   const handleSphereClick = useCallback((i: number) => {
@@ -59,68 +93,85 @@ export function TheExhibition() {
 
   return (
     <main className="relative z-10 flex-1 w-full flex flex-col">
-      {/* ═══ HERO: 3D ORBIT GALLERY ══════════════════════════════════ */}
-      <section className="relative w-full h-[100svh] -mt-[var(--header-h)]">
-        {/* Overlay text */}
-        <div className="absolute top-24 left-0 right-0 z-10 p-6 pointer-events-none">
-          <motion.h1
-            initial={{ opacity: 0, y: 30 }}
-            animate={focusedIndex !== null ? { opacity: 0, y: -20 } : { opacity: 1, y: 0 }}
-            transition={{ duration: focusedIndex !== null ? 0.8 : 1.2, ease: [0.22, 1, 0.36, 1] }}
-            className="max-w-[750px] mx-auto text-white text-center px-6 md:text-6xl text-4xl text-balance tracking-tight font-normal leading-[1.15]"
-            style={{ fontFamily: "'Instrument Serif', serif" }}
-          >
-            Our stories are united. They live on beyond the walls and doors of our souls. There is only one take. Capture yours.
-          </motion.h1>
-        </div>
-
-        {/* Bottom gradient fade */}
-        <div className="absolute bottom-0 left-0 right-0 h-69 bg-gradient-to-t from-[#010101] to-transparent z-10 pointer-events-none" />
-
-        {/* Subtle vignette */}
-        <div
-          className="absolute inset-0 z-[5] pointer-events-none"
-          style={{ background: "radial-gradient(ellipse at center, transparent 40%, rgba(1,1,1,0.7) 100%)" }}
-        />
-
-        {/* Cosmic comet shader - deepest background layer */}
-        <div className="absolute inset-0 z-[1] opacity-60 pointer-events-none">
-          <CosmicCometShader />
-        </div>
-
-        {/* 3D Orbit Gallery - above shader */}
-        <div className="absolute inset-0 z-[3]">
-          <Cosmos3DOrbitGallery
-            images={imageUrls}
-            onImageClick={handleSphereClick}
-            focusedIndex={focusedIndex}
-            onFlyInComplete={handleFlyInComplete}
-            onFlyOutComplete={handleFlyOutComplete}
-          />
-        </div>
-
-        {/* Bottom scroll zone gradient - hints at the scrollable area */}
-        <div
-          className="absolute bottom-0 left-0 right-0 z-[15] h-[30%]"
-          style={{ background: "linear-gradient(to bottom, transparent 0%, rgba(0,0,0,0.35) 50%, rgba(0,0,0,0.7) 100%)" }}
-        />
-
-        {/* Scroll indicator */}
-        <motion.div
-          initial={{ opacity: 0 }}
-          animate={{ opacity: focusedIndex !== null ? 0 : 1 }}
-          transition={{ delay: focusedIndex !== null ? 0 : 2, duration: focusedIndex !== null ? 0.5 : 1 }}
-          className="absolute bottom-[16%] left-1/2 -translate-x-1/2 z-20 flex flex-col items-center gap-2 pointer-events-none"
-        >
-          <span className="text-[9px] font-mono text-white/20 tracking-widest uppercase">Scroll to explore</span>
+      {/* ═══ HERO: THE GALAXY. The page scrolls through this scene while the stage stays pinned. ═══ */}
+      <section ref={sceneRef} aria-label="The galaxy" className="relative w-full h-[260svh] -mt-[var(--header-h)]">
+        <div className="sticky top-0 w-full h-[100svh] overflow-hidden">
+          {/* Overlay text */}
           <motion.div
-            animate={{ y: [0, 6, 0] }}
-            transition={{ repeat: Infinity, duration: 1.8, ease: "easeInOut" }}
-            className="w-4 h-7 rounded-full border border-white/15 flex items-start justify-center p-1"
+            style={{ opacity: headlineOpacity, y: headlineY }}
+            className="absolute top-24 left-0 right-0 z-10 p-6 pointer-events-none"
           >
-            <div className="w-1 h-1.5 rounded-full bg-white/30" />
+            <motion.h1
+              initial={{ opacity: 0, y: 30 }}
+              animate={focusedIndex !== null ? { opacity: 0, y: -20 } : { opacity: 1, y: 0 }}
+              transition={{ duration: focusedIndex !== null ? 0.8 : 1.2, ease: [0.22, 1, 0.36, 1] }}
+              className="max-w-[750px] mx-auto text-white text-center px-6 md:text-6xl text-4xl text-balance tracking-tight font-normal leading-[1.15]"
+              style={{ fontFamily: "'Instrument Serif', serif" }}
+            >
+              Our stories are united. They live on beyond the walls and doors of our souls. There is only one take. Capture yours.
+            </motion.h1>
           </motion.div>
-        </motion.div>
+
+          {/* Subtle vignette */}
+          <div
+            className="absolute inset-0 z-[5] pointer-events-none"
+            style={{ background: "radial-gradient(ellipse at center, transparent 40%, rgba(1,1,1,0.7) 100%)" }}
+          />
+
+          {/* Cosmic comet shader - deepest background layer */}
+          <div className="absolute inset-0 z-[1] opacity-60 pointer-events-none">
+            <CosmicCometShader />
+          </div>
+
+          {/* 3D Orbit Gallery - above shader */}
+          <div className="absolute inset-0 z-[3]">
+            <Cosmos3DOrbitGallery
+              images={imageUrls}
+              onImageClick={handleSphereClick}
+              focusedIndex={focusedIndex}
+              onFlyInComplete={handleFlyInComplete}
+              onFlyOutComplete={handleFlyOutComplete}
+              scrollProgressRef={scrollProgressRef}
+            />
+          </div>
+
+          {/* Scroll indicator */}
+          <motion.div
+            style={{ opacity: cueOpacity }}
+            className="absolute bottom-[16%] left-1/2 -translate-x-1/2 z-20 pointer-events-none"
+          >
+            <motion.div
+              initial={{ opacity: 0 }}
+              animate={{ opacity: focusedIndex !== null ? 0 : 1 }}
+              transition={{ delay: focusedIndex !== null ? 0 : 2, duration: focusedIndex !== null ? 0.5 : 1 }}
+              className="flex flex-col items-center gap-2"
+            >
+              <span className="text-[9px] font-mono text-white/20 tracking-widest uppercase">Scroll to explore</span>
+              <motion.div
+                animate={reducedMotion ? undefined : { y: [0, 6, 0] }}
+                transition={{ repeat: Infinity, duration: 1.8, ease: "easeInOut" }}
+                className="w-4 h-7 rounded-full border border-white/15 flex items-start justify-center p-1"
+              >
+                <div className="w-1 h-1.5 rounded-full bg-white/30" />
+              </motion.div>
+            </motion.div>
+          </motion.div>
+
+          {/* Tap in / tap out */}
+          <div className="absolute bottom-[7%] left-0 right-0 z-30 flex justify-center pointer-events-none">
+            <motion.button
+              type="button"
+              onClick={toggleGalaxy}
+              initial={{ opacity: 0 }}
+              animate={{ opacity: focusedIndex !== null ? 0 : 1 }}
+              transition={{ delay: focusedIndex !== null ? 0 : 2.2, duration: 0.8 }}
+              style={{ pointerEvents: focusedIndex !== null ? "none" : "auto" }}
+              className="px-5 py-2.5 rounded-full border border-white/15 bg-white/[0.04] backdrop-blur-md text-[10px] font-mono text-white/70 hover:text-white hover:border-white/30 hover:bg-white/10 transition-colors tracking-widest uppercase"
+            >
+              {immersed ? "Back to overview" : "Enter the galaxy"}
+            </motion.button>
+          </div>
+        </div>
       </section>
 
       {/* ═══ GALLERY GRID ═══════════════════════════════════════════ */}

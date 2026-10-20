@@ -1,4 +1,4 @@
-import { useEffect, useRef } from "react";
+import { useEffect, useRef, type MutableRefObject } from "react";
 import * as THREE from "three";
 
 type GalleryState = "IDLE" | "FLYING_IN" | "FOCUSED" | "FLYING_OUT";
@@ -9,6 +9,8 @@ interface Cosmos3DOrbitGalleryProps {
   focusedIndex: number | null;
   onFlyInComplete?: () => void;
   onFlyOutComplete?: () => void;
+  // Page scroll progress, 0 (overview) to 1 (immersed). The page owns the scroll; the scene only reads it.
+  scrollProgressRef?: MutableRefObject<number>;
 }
 
 export function Cosmos3DOrbitGallery({
@@ -17,6 +19,7 @@ export function Cosmos3DOrbitGallery({
   focusedIndex,
   onFlyInComplete,
   onFlyOutComplete,
+  scrollProgressRef,
 }: Cosmos3DOrbitGalleryProps) {
   const containerRef = useRef<HTMLDivElement>(null);
   const onImageClickRef = useRef(onImageClick);
@@ -63,6 +66,10 @@ export function Cosmos3DOrbitGallery({
     );
     const HOME_POS = new THREE.Vector3(-7, 1, 7);
     const HOME_LOOK = new THREE.Vector3(0, 0, 0);
+    // Scroll moves the camera between these two distances from the centre.
+    const HOME_DISTANCE = HOME_POS.length();
+    const IMMERSED_DISTANCE = 6.2;
+    let appliedProgress = -1;
     camera.position.copy(HOME_POS);
     camera.lookAt(HOME_LOOK);
 
@@ -266,7 +273,6 @@ export function Cosmos3DOrbitGallery({
 
     const onPointerDown = (e: PointerEvent) => {
       if (state !== "IDLE") return;
-      if (e.pointerType !== "mouse") e.preventDefault();
       try {
         el.setPointerCapture(e.pointerId);
       } catch {
@@ -294,7 +300,6 @@ export function Cosmos3DOrbitGallery({
       }
 
       if (activePointers.size >= 2) {
-        e.preventDefault();
         updatePinchZoom();
         return;
       }
@@ -359,13 +364,7 @@ export function Cosmos3DOrbitGallery({
       if (e.pointerType === "mouse") finishPointer(e, false);
     };
 
-    const onWheel = (e: WheelEvent) => {
-      if (state !== "IDLE") return;
-      e.preventDefault();
-      const z = camera.position.length();
-      zoomCameraToDistance(z + e.deltaY * 0.01);
-    };
-
+    // The page owns vertical scrolling. The wheel and touch drags are not captured here.
     const el = renderer.domElement;
     el.style.cursor = "grab";
     el.addEventListener("pointerdown", onPointerDown);
@@ -373,20 +372,6 @@ export function Cosmos3DOrbitGallery({
     el.addEventListener("pointerup", onPointerUp);
     el.addEventListener("pointercancel", onPointerCancel);
     el.addEventListener("pointerleave", onPointerLeave);
-    el.addEventListener("wheel", onWheel, { passive: false });
-
-    // ── Mobile touch ──
-    let touchStartInScrollZone = false;
-    const onTouchStart = (e: TouchEvent) => {
-      const rect = el.getBoundingClientRect();
-      const touchY = e.touches[0].clientY - rect.top;
-      touchStartInScrollZone = touchY / rect.height >= 0.8;
-    };
-    const onTouchMove = (e: TouchEvent) => {
-      if (e.touches.length >= 2 || !touchStartInScrollZone) e.preventDefault();
-    };
-    el.addEventListener("touchstart", onTouchStart, { passive: true });
-    el.addEventListener("touchmove", onTouchMove, { passive: false });
 
     // ── Resize ──
     const onResize = () => {
@@ -435,6 +420,14 @@ export function Cosmos3DOrbitGallery({
     const animate = () => {
       animId = requestAnimationFrame(animate);
       const dt = Math.min(clock.getDelta(), 0.05); // cap to prevent jumps
+
+      // ── Scroll dolly: the page scroll decides how far the camera has moved into the galaxy ──
+      const progress = scrollProgressRef?.current ?? 0;
+      if (state === "IDLE" && progress !== appliedProgress) {
+        appliedProgress = progress;
+        const eased = progress * progress * (3 - 2 * progress);
+        zoomCameraToDistance(THREE.MathUtils.lerp(HOME_DISTANCE, IMMERSED_DISTANCE, eased));
+      }
 
       // ── Process commands from React ──
       const cmd = stateCommandRef.current;
@@ -550,6 +543,7 @@ export function Cosmos3DOrbitGallery({
 
         if (dist < 0.15 && flyProgress > 0.92) {
           state = "IDLE";
+          appliedProgress = -1; // re-apply the scroll position on the next frame
           camera.position.copy(HOME_POS);
           camera.lookAt(HOME_LOOK);
           flyTargetMeshIdx = null;
@@ -589,10 +583,7 @@ export function Cosmos3DOrbitGallery({
       el.removeEventListener("pointerup", onPointerUp);
       el.removeEventListener("pointercancel", onPointerCancel);
       el.removeEventListener("pointerleave", onPointerLeave);
-      el.removeEventListener("wheel", onWheel);
       el.removeEventListener("pointermove", onHoverMove);
-      el.removeEventListener("touchstart", onTouchStart);
-      el.removeEventListener("touchmove", onTouchMove);
       window.removeEventListener("resize", onResize);
       renderer.dispose();
       if (container.contains(el)) container.removeChild(el);
@@ -603,7 +594,7 @@ export function Cosmos3DOrbitGallery({
     <div
       ref={containerRef}
       className="absolute inset-0"
-      style={{ overscrollBehavior: "contain", touchAction: "none" }}
+      style={{ touchAction: "pan-y" }}
     />
   );
 }
