@@ -47,7 +47,7 @@ export function Layout() {
              </div>
           </Link>
 
-          <div className="hidden md:flex gap-4">
+          <div className="hidden xl:flex gap-4">
             <Link to="/radar" className="px-5 py-2 rounded-full border border-white/10 bg-white/5 backdrop-blur-md text-xs font-mono text-white/70 hover:text-white hover:bg-white/10 hover:border-white/20 transition-all flex items-center gap-2 tracking-widest uppercase shadow-[0_4px_14px_rgba(0,0,0,0.1)]">
               <Radar size={12} className="text-cyan-400/40" /> RADAR
             </Link>
@@ -66,7 +66,7 @@ export function Layout() {
           </div>
 
           <button
-            className="md:hidden p-2 text-white/70 hover:text-white transition-colors"
+            className="xl:hidden p-2 text-white/70 hover:text-white transition-colors"
             onClick={() => setIsMenuOpen(true)}
             aria-label="Open menu"
           >
@@ -83,7 +83,7 @@ export function Layout() {
               initial={{ opacity: 0 }}
               animate={{ opacity: 1 }}
               exit={{ opacity: 0 }}
-              className="fixed inset-0 z-[60] bg-black/40 backdrop-blur-sm md:hidden"
+              className="fixed inset-0 z-[60] bg-black/40 backdrop-blur-sm xl:hidden"
               onClick={() => setIsMenuOpen(false)}
             />
             <motion.div
@@ -91,7 +91,7 @@ export function Layout() {
               animate={{ x: 0 }}
               exit={{ x: "100%" }}
               transition={{ type: "spring", damping: 25, stiffness: 200 }}
-              className="fixed top-0 right-0 bottom-0 w-64 z-[70] bg-white/[0.03] backdrop-blur-xl border-l border-white/20 shadow-2xl md:hidden flex flex-col p-6"
+              className="fixed top-0 right-0 bottom-0 w-64 z-[70] bg-white/[0.03] backdrop-blur-xl border-l border-white/20 shadow-2xl xl:hidden flex flex-col p-6"
             >
               <div className="flex justify-end mb-8">
                 <button

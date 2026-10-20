@@ -1,3 +1,5 @@
 node_modules/
 dist/
 .tmp-utils-inspect/
+test-results/
+playwright-report/

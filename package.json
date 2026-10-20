@@ -6,6 +6,8 @@
   "scripts": {
     "dev": "vite",
     "build": "vite build",
+    "test": "vitest run",
+    "test:e2e": "playwright test",
     "start": "node server.mjs"
   },
   "dependencies": {
@@ -71,12 +73,15 @@
     "vaul": "1.1.2"
   },
   "devDependencies": {
+    "@playwright/test": "1.56.1",
     "@tailwindcss/vite": "4.1.12",
     "@types/react-dom": "^18.3.7",
     "@types/three": "^0.186.0",
     "@vitejs/plugin-react": "4.7.0",
+    "axe-core": "4.14.0",
     "tailwindcss": "4.1.12",
-    "vite": "6.3.5"
+    "vite": "6.3.5",
+    "vitest": "3.2.7"
   },
   "pnpm": {
     "overrides": {

@@ -8,11 +8,10 @@ interface ImageViewerProps {
   src: string;
   index: number;
   onClose: () => void;
-  skipEntrance?: boolean; // when true, appears instantly (used after 3D fly-in blackout)
   title?: string; // artwork title
 }
 
-export function ImageViewer({ src, index, onClose, skipEntrance = false, title }: ImageViewerProps) {
+export function ImageViewer({ src, index, onClose, title }: ImageViewerProps) {
   const [zoom, setZoom] = useState(1);
   const [pan, setPan] = useState({ x: 0, y: 0 });
   const [isFullscreen, setIsFullscreen] = useState(false);
@@ -123,18 +122,18 @@ export function ImageViewer({ src, index, onClose, skipEntrance = false, title }
     }
   }, [zoom, resetView]);
 
-  // Entrance timings: skip animations when coming from 3D fly-in blackout
-  const entranceDuration = skipEntrance ? 0 : 0.4;
-  const entranceDelay = skipEntrance ? 0 : 0.15;
-  const imageDelay = skipEntrance ? 0 : 0.1;
-  const imageDuration = skipEntrance ? 0 : 0.5;
-  const hintDelay = skipEntrance ? 0.3 : 0.6;
+  // Entrance timings.
+  const entranceDuration = 0.4;
+  const entranceDelay = 0.15;
+  const imageDelay = 0.1;
+  const imageDuration = 0.5;
+  const hintDelay = 0.6;
 
   return createPortal(
     <AnimatePresence>
       <motion.div
         ref={containerRef}
-        initial={{ opacity: skipEntrance ? 1 : 0 }}
+        initial={{ opacity: 0 }}
         animate={{ opacity: 1 }}
         exit={{ opacity: 0 }}
         transition={{ duration: entranceDuration, ease: [0.22, 1, 0.36, 1] }}
@@ -142,7 +141,7 @@ export function ImageViewer({ src, index, onClose, skipEntrance = false, title }
       >
         {/* ── Top bar ── */}
         <motion.div
-          initial={{ opacity: 0, y: skipEntrance ? 0 : -20 }}
+          initial={{ opacity: 0, y: -20 }}
           animate={{ opacity: 1, y: 0 }}
           transition={{ delay: entranceDelay, duration: entranceDuration }}
           className="relative z-10 flex items-center justify-between px-5 py-4 bg-white/[0.04] border-b border-white/[0.08] backdrop-blur-xl"
@@ -203,7 +202,7 @@ export function ImageViewer({ src, index, onClose, skipEntrance = false, title }
 
         {/* ── Image viewport ── */}
         <motion.div
-          initial={{ opacity: skipEntrance ? 1 : 0, scale: skipEntrance ? 1 : 0.92 }}
+          initial={{ opacity: 0, scale: 0.92 }}
           animate={{ opacity: 1, scale: 1 }}
           transition={{ delay: imageDelay, duration: imageDuration, ease: [0.22, 1, 0.36, 1] }}
           className="flex-1 overflow-hidden flex items-center justify-center p-6 md:p-12"
