@@ -149,10 +149,10 @@ export function ImageViewer({ src, index, onClose, skipEntrance = false, title }
         >
           {/* Left: piece info */}
           <div className="flex items-center gap-4">
-            <span className="text-[10px] font-mono text-cyan-400/80 tracking-widest uppercase">
+            <span className="text-xs font-mono text-cyan-300 tracking-widest uppercase">
               {title || `Piece ${String(index + 1).padStart(2, "0")}`}
             </span>
-            <span className="text-[10px] font-mono text-white/20">
+            <span className="text-xs font-mono text-white/60">
               {Math.round(zoom * 100)}%
             </span>
           </div>
@@ -161,21 +161,21 @@ export function ImageViewer({ src, index, onClose, skipEntrance = false, title }
           <div className="flex items-center gap-1">
             <button
               onClick={() => setZoom((z) => Math.max(z - 0.5, 0.8))}
-              className="p-2.5 rounded-xl text-white/40 hover:text-white hover:bg-white/[0.06] transition-all"
+              className="p-2.5 rounded-xl text-white/70 hover:text-white hover:bg-white/[0.06] transition-all"
               title="Zoom out"
             >
               <ZoomOut size={16} />
             </button>
             <button
               onClick={() => setZoom((z) => Math.min(z + 0.5, 8))}
-              className="p-2.5 rounded-xl text-white/40 hover:text-white hover:bg-white/[0.06] transition-all"
+              className="p-2.5 rounded-xl text-white/70 hover:text-white hover:bg-white/[0.06] transition-all"
               title="Zoom in"
             >
               <ZoomIn size={16} />
             </button>
             <button
               onClick={resetView}
-              className="p-2.5 rounded-xl text-white/40 hover:text-white hover:bg-white/[0.06] transition-all"
+              className="p-2.5 rounded-xl text-white/70 hover:text-white hover:bg-white/[0.06] transition-all"
               title="Reset view"
             >
               <RotateCcw size={16} />
@@ -185,7 +185,7 @@ export function ImageViewer({ src, index, onClose, skipEntrance = false, title }
 
             <button
               onClick={toggleFullscreen}
-              className="p-2.5 rounded-xl text-white/40 hover:text-white hover:bg-white/[0.06] transition-all"
+              className="p-2.5 rounded-xl text-white/70 hover:text-white hover:bg-white/[0.06] transition-all"
               title={isFullscreen ? "Exit fullscreen" : "Fullscreen"}
             >
               {isFullscreen ? <Minimize size={16} /> : <Maximize size={16} />}
@@ -193,7 +193,7 @@ export function ImageViewer({ src, index, onClose, skipEntrance = false, title }
 
             <button
               onClick={onClose}
-              className="p-2.5 rounded-xl text-white/40 hover:text-white hover:bg-white/[0.06] transition-all"
+              className="p-2.5 rounded-xl text-white/70 hover:text-white hover:bg-white/[0.06] transition-all"
               title="Close (Esc)"
             >
               <X size={18} />
@@ -235,7 +235,7 @@ export function ImageViewer({ src, index, onClose, skipEntrance = false, title }
           transition={{ delay: hintDelay, duration: 0.5 }}
           className="py-3 text-center bg-white/[0.02]"
         >
-          <span className="text-[9px] font-mono text-white/15 tracking-widest uppercase">
+          <span className="text-xs font-mono text-white/60 tracking-widest uppercase">
             Scroll to zoom · Double-click to toggle · Drag to pan
           </span>
         </motion.div>

@@ -40,27 +40,27 @@ export function Layout() {
       >
         <div className="flex justify-between items-center max-w-[1400px] mx-auto px-4 lg:px-8 py-4">
           <Link to="/" className="flex flex-col gap-0.5 group">
-             <h1 className="text-white/40 font-mono text-[10px] tracking-[0.3em] uppercase group-hover:text-cyan-400/80 transition-colors">VICTOR.CEO</h1>
+             <h1 className="text-white/70 font-mono text-xs tracking-[0.3em] uppercase group-hover:text-cyan-400 transition-colors">VICTOR.CEO</h1>
              <div className="flex items-center gap-2">
                <div className="w-1.5 h-1.5 bg-green-500 rounded-full shadow-[0_0_8px_rgba(34,197,94,0.8)] animate-pulse" />
-               <span className="text-white/80 font-mono text-[11px] tracking-widest">SYSTEM ONLINE</span>
+               <span className="text-white/80 font-mono text-xs tracking-widest">SYSTEM ONLINE</span>
              </div>
           </Link>
 
           <div className="hidden md:flex gap-4">
-            <Link to="/radar" className="px-5 py-2 rounded-full border border-white/10 bg-white/5 backdrop-blur-md text-[10px] font-mono text-white/30 hover:text-white/40 hover:bg-white/10 hover:border-white/20 transition-all flex items-center gap-2 tracking-widest uppercase shadow-[0_4px_14px_rgba(0,0,0,0.1)]">
+            <Link to="/radar" className="px-5 py-2 rounded-full border border-white/10 bg-white/5 backdrop-blur-md text-xs font-mono text-white/70 hover:text-white hover:bg-white/10 hover:border-white/20 transition-all flex items-center gap-2 tracking-widest uppercase shadow-[0_4px_14px_rgba(0,0,0,0.1)]">
               <Radar size={12} className="text-cyan-400/40" /> RADAR
             </Link>
-            <Link to="/watchlist" className="px-5 py-2 rounded-full border border-white/10 bg-white/5 backdrop-blur-md text-[10px] font-mono text-white/30 hover:text-white/40 hover:bg-white/10 hover:border-white/20 transition-all flex items-center gap-2 tracking-widest uppercase shadow-[0_4px_14px_rgba(0,0,0,0.1)]">
+            <Link to="/watchlist" className="px-5 py-2 rounded-full border border-white/10 bg-white/5 backdrop-blur-md text-xs font-mono text-white/70 hover:text-white hover:bg-white/10 hover:border-white/20 transition-all flex items-center gap-2 tracking-widest uppercase shadow-[0_4px_14px_rgba(0,0,0,0.1)]">
               <Bookmark size={12} className="text-cyan-400/40" /> WATCHLIST
             </Link>
-            <Link to="/" aria-current={onExhibition ? "page" : undefined} className="px-5 py-2 rounded-full border border-white/10 bg-white/5 backdrop-blur-md text-[10px] font-mono text-white/60 hover:text-white hover:bg-white/10 hover:border-white/20 transition-all flex items-center gap-2 tracking-widest uppercase shadow-[0_4px_14px_rgba(0,0,0,0.1)]">
+            <Link to="/" aria-current={onExhibition ? "page" : undefined} className={`px-5 py-2 rounded-full border bg-white/5 backdrop-blur-md text-xs font-mono hover:text-white hover:bg-white/10 hover:border-white/20 transition-all flex items-center gap-2 tracking-widest uppercase shadow-[0_4px_14px_rgba(0,0,0,0.1)] ${onExhibition ? "border-white/30 text-white" : "border-white/10 text-white/70"}`}>
               <Paintbrush size={12} className="text-cyan-400" /> THE EXHIBITION
             </Link>
-            <Link to="/pre-release" className="px-5 py-2 rounded-full border border-white/10 bg-white/5 backdrop-blur-md text-[10px] font-mono text-white/60 hover:text-white hover:bg-white/10 hover:border-white/20 transition-all flex items-center gap-2 tracking-widest uppercase shadow-[0_4px_14px_rgba(0,0,0,0.1)]">
+            <Link to="/pre-release" className="px-5 py-2 rounded-full border border-white/10 bg-white/5 backdrop-blur-md text-xs font-mono text-white/70 hover:text-white hover:bg-white/10 hover:border-white/20 transition-all flex items-center gap-2 tracking-widest uppercase shadow-[0_4px_14px_rgba(0,0,0,0.1)]">
               <Clock size={12} className="text-orange-500" /> PRE-RELEASE
             </Link>
-            <Link to="/lab" className="px-5 py-2 rounded-full border border-white/10 bg-white/5 backdrop-blur-md text-[10px] font-mono text-white/30 hover:text-white/40 hover:bg-white/10 hover:border-white/20 transition-all flex items-center gap-2 tracking-widest uppercase shadow-[0_4px_14px_rgba(0,0,0,0.1)]">
+            <Link to="/lab" className="px-5 py-2 rounded-full border border-white/10 bg-white/5 backdrop-blur-md text-xs font-mono text-white/70 hover:text-white hover:bg-white/10 hover:border-white/20 transition-all flex items-center gap-2 tracking-widest uppercase shadow-[0_4px_14px_rgba(0,0,0,0.1)]">
               <span className="text-cyan-400/40">{"<"}</span> BACK TO LAB
             </Link>
           </div>
@@ -103,19 +103,19 @@ export function Layout() {
                 </button>
               </div>
               <div className="flex flex-col gap-4">
-                <Link to="/radar" onClick={() => setIsMenuOpen(false)} className="w-full px-5 py-3 rounded-xl border border-white/10 bg-white/5 text-[11px] font-mono text-white/40 hover:text-white/50 hover:bg-white/10 transition-all flex items-center gap-3 tracking-widest uppercase text-left">
+                <Link to="/radar" onClick={() => setIsMenuOpen(false)} className="w-full px-5 py-3 rounded-xl border border-white/10 bg-white/5 text-xs font-mono text-white/70 hover:text-white hover:bg-white/10 transition-all flex items-center gap-3 tracking-widest uppercase text-left">
                   <Radar size={14} className="text-cyan-400/40 shrink-0" /> RADAR
                 </Link>
-                <Link to="/watchlist" onClick={() => setIsMenuOpen(false)} className="w-full px-5 py-3 rounded-xl border border-white/10 bg-white/5 text-[11px] font-mono text-white/40 hover:text-white/50 hover:bg-white/10 transition-all flex items-center gap-3 tracking-widest uppercase text-left">
+                <Link to="/watchlist" onClick={() => setIsMenuOpen(false)} className="w-full px-5 py-3 rounded-xl border border-white/10 bg-white/5 text-xs font-mono text-white/70 hover:text-white hover:bg-white/10 transition-all flex items-center gap-3 tracking-widest uppercase text-left">
                   <Bookmark size={14} className="text-cyan-400/40 shrink-0" /> WATCHLIST
                 </Link>
-                <Link to="/" onClick={() => setIsMenuOpen(false)} aria-current={onExhibition ? "page" : undefined} className="w-full px-5 py-3 rounded-xl border border-white/10 bg-white/5 text-[11px] font-mono text-white/80 hover:text-white hover:bg-white/10 transition-all flex items-center gap-3 tracking-widest uppercase text-left">
+                <Link to="/" onClick={() => setIsMenuOpen(false)} aria-current={onExhibition ? "page" : undefined} className="w-full px-5 py-3 rounded-xl border border-white/10 bg-white/5 text-xs font-mono text-white hover:bg-white/10 transition-all flex items-center gap-3 tracking-widest uppercase text-left">
                   <Paintbrush size={14} className="text-cyan-400 shrink-0" /> THE EXHIBITION
                 </Link>
-                <Link to="/pre-release" onClick={() => setIsMenuOpen(false)} className="w-full px-5 py-3 rounded-xl border border-white/10 bg-white/5 text-[11px] font-mono text-white/80 hover:text-white hover:bg-white/10 transition-all flex items-center gap-3 tracking-widest uppercase text-left">
+                <Link to="/pre-release" onClick={() => setIsMenuOpen(false)} className="w-full px-5 py-3 rounded-xl border border-white/10 bg-white/5 text-xs font-mono text-white hover:bg-white/10 transition-all flex items-center gap-3 tracking-widest uppercase text-left">
                   <Clock size={14} className="text-orange-500" /> PRE-RELEASE
                 </Link>
-                <Link to="/lab" onClick={() => setIsMenuOpen(false)} className="w-full px-5 py-3 rounded-xl border border-white/10 bg-white/5 text-[11px] font-mono text-white/40 hover:text-white/50 hover:bg-white/10 transition-all flex items-center gap-3 tracking-widest uppercase text-left">
+                <Link to="/lab" onClick={() => setIsMenuOpen(false)} className="w-full px-5 py-3 rounded-xl border border-white/10 bg-white/5 text-xs font-mono text-white/70 hover:text-white hover:bg-white/10 transition-all flex items-center gap-3 tracking-widest uppercase text-left">
                   <span className="text-cyan-400/40">{"<"}</span> BACK TO LAB
                 </Link>
               </div>
