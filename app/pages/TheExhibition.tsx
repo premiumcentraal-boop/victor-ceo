@@ -1,18 +1,31 @@
-import React, { useState, useCallback, useMemo, useRef } from "react";
+import React, { useState, useCallback, useEffect, useMemo, useRef } from "react";
 import { GalaxyHero } from "../exhibition/GalaxyHero";
+import { FocusCaption } from "../exhibition/ui/FocusCaption";
 import { galleryPictures as galleryImages, pictureSrc } from "../exhibition/data/pictures";
+import { loadVisited, saveVisited } from "../exhibition/state/visited";
 import { AnimatePresence, motion, useMotionValueEvent, useScroll, useTransform } from "motion/react";
 import { ImageViewer } from "../components/ImageViewer";
 import { useReducedMotion } from "../hooks/useReducedMotion";
 
 export function TheExhibition() {
+  // The flat viewer: the grid, and any device without WebGL.
   const [viewerIndex, setViewerIndex] = useState<number | null>(null);
-  const [focusedIndex, setFocusedIndex] = useState<number | null>(null);
   const [showViewer, setShowViewer] = useState(false);
+  // The galaxy's focused picture, and whether it has arrived.
+  const [focusedIndex, setFocusedIndex] = useState<number | null>(null);
+  const [arrived, setArrived] = useState(false);
+  const [hiResLoading, setHiResLoading] = useState(false);
+  const [flatMode, setFlatMode] = useState(false);
+  const [visited, setVisited] = useState<Set<number>>(() => loadVisited());
   const [immersed, setImmersed] = useState(false);
+  const captionTitleRef = useRef<HTMLHeadingElement>(null);
+  // The latest focused piece, for handlers that run from the galaxy's own frame loop.
+  const focusedRef = useRef<number | null>(null);
+  focusedRef.current = focusedIndex;
 
-  // Stable reference — prevents Three.js scene from remounting on every render
+  // Stable references: the galaxy only rebuilds when these change, never on a re-render.
   const imageUrls = useMemo(() => galleryImages.map(g => pictureSrc(g.url, "scene")), []);
+  const focusUrls = useMemo(() => galleryImages.map(g => pictureSrc(g.url, "focus")), []);
   const galleryTitles = useMemo(() => galleryImages.map(g => g.title), []);
 
   // ── Scroll scene ──
@@ -47,37 +60,66 @@ export function TheExhibition() {
     window.scrollTo({ top: Math.max(0, target), behavior: reducedMotion ? "auto" : "smooth" });
   }, [reducedMotion]);
 
-  // 3D sphere click → fly camera in, then open viewer
+  // ── The galaxy's events ──
+  // A tap on a picture: the galaxy flies to it, unless the flat viewer is the only option.
   const handleSphereClick = useCallback((i: number) => {
+    if (flatMode) {
+      setViewerIndex(i);
+      setShowViewer(true);
+      return;
+    }
+    setArrived(false);
     setFocusedIndex(i);
-    setViewerIndex(i);
+  }, [flatMode]);
+
+  const handleArrive = useCallback((i: number) => {
+    setArrived(true);
+    setVisited(prev => {
+      if (prev.has(i)) return prev;
+      const next = new Set(prev).add(i);
+      saveVisited(next);
+      return next;
+    });
   }, []);
 
-  // Gallery grid click → open viewer directly (no fly-in)
+  const handleFlyOutComplete = useCallback(() => {
+    setArrived(false);
+  }, []);
+
+  const handleRequestClose = useCallback(() => {
+    setArrived(false);
+    setFocusedIndex(null);
+  }, []);
+
+  // Previous and next keep the same focused view and move the camera to the neighbour.
+  const handleStep = useCallback((direction: -1 | 1) => {
+    const current = focusedRef.current;
+    if (current === null) return;
+    const count = galleryImages.length;
+    setArrived(false);
+    setFocusedIndex((current + direction + count) % count);
+  }, []);
+
+  const handleHiResState = useCallback((_index: number, state: "loading" | "ready") => {
+    setHiResLoading(state === "loading");
+  }, []);
+
+  const handleUnsupported = useCallback(() => setFlatMode(true), []);
+
+  // When a piece arrives, the caption takes focus, so a keyboard user can use it straight away.
+  useEffect(() => {
+    if (arrived) captionTitleRef.current?.focus({ preventScroll: true });
+  }, [arrived]);
+
+  // Gallery grid click → open the flat viewer directly.
   const handleGridClick = useCallback((i: number) => {
     setViewerIndex(i);
     setShowViewer(true);
   }, []);
 
-  // Three.js fly-in complete → show the 2D viewer overlay
-  const handleFlyInComplete = useCallback(() => {
-    setShowViewer(true);
-  }, []);
-
-  // User closes the viewer → hide overlay, start fly-out if we flew in
+  // User closes the flat viewer.
   const handleViewerClose = useCallback(() => {
     setShowViewer(false);
-    if (focusedIndex !== null) {
-      // Was a 3D fly-in — trigger fly-out
-      setFocusedIndex(null);
-    } else {
-      // Was a grid click — just close
-      setViewerIndex(null);
-    }
-  }, [focusedIndex]);
-
-  // Three.js fly-out complete → reset everything
-  const handleFlyOutComplete = useCallback(() => {
     setViewerIndex(null);
   }, []);
 
@@ -112,11 +154,17 @@ export function TheExhibition() {
           <div className="absolute inset-0 z-[3]">
             <GalaxyHero
               images={imageUrls}
+              focusImages={focusUrls}
               titles={galleryTitles}
-              onImageClick={handleSphereClick}
+              visited={visited}
               focusedIndex={focusedIndex}
-              onFlyInComplete={handleFlyInComplete}
+              onImageClick={handleSphereClick}
+              onArrive={handleArrive}
               onFlyOutComplete={handleFlyOutComplete}
+              onRequestClose={handleRequestClose}
+              onStep={handleStep}
+              onHiResState={handleHiResState}
+              onUnsupported={handleUnsupported}
               scrollProgressRef={scrollProgressRef}
             />
           </div>
@@ -157,6 +205,23 @@ export function TheExhibition() {
               {immersed ? "Back to overview" : "Enter the galaxy"}
             </motion.button>
           </div>
+
+          {/* The focused piece's caption. The picture is the viewer; this only names it and offers the controls. */}
+          <AnimatePresence>
+            {focusedIndex !== null && arrived && !flatMode && (
+              <FocusCaption
+                key="focus-caption"
+                ref={captionTitleRef}
+                number={focusedIndex + 1}
+                total={galleryImages.length}
+                title={galleryImages[focusedIndex].title}
+                loading={hiResLoading}
+                onPrevious={() => handleStep(-1)}
+                onNext={() => handleStep(1)}
+                onClose={handleRequestClose}
+              />
+            )}
+          </AnimatePresence>
         </div>
       </section>
 
@@ -198,6 +263,11 @@ export function TheExhibition() {
                 loading="lazy"
                 crossOrigin="anonymous"
               />
+              {visited.has(i) && (
+                <span className="absolute top-3 left-3 rounded-full border border-amber-200/30 bg-black/40 px-2.5 py-1 text-[9px] font-mono tracking-widest text-amber-100/80 uppercase backdrop-blur-md">
+                  Viewed
+                </span>
+              )}
               <div className="absolute inset-0 bg-gradient-to-t from-black/60 via-transparent to-transparent opacity-0 group-hover:opacity-100 transition-opacity duration-500" />
               <div className="absolute bottom-3 left-3 right-3 opacity-0 group-hover:opacity-100 transition-all duration-500 translate-y-2 group-hover:translate-y-0">
                 <span className="text-[9px] font-mono text-white/60 tracking-widest uppercase">
@@ -209,7 +279,7 @@ export function TheExhibition() {
         </div>
       </section>
 
-      {/* ═══ FULLSCREEN IMAGE VIEWER ══════════════════════════════ */}
+      {/* ═══ FLAT IMAGE VIEWER: the grid, and devices without WebGL ═══════════════ */}
       <AnimatePresence>
         {showViewer && viewerIndex !== null && (
           <ImageViewer
@@ -218,7 +288,6 @@ export function TheExhibition() {
             index={viewerIndex}
             title={galleryImages[viewerIndex].title}
             onClose={handleViewerClose}
-            skipEntrance={focusedIndex !== null}
           />
         )}
       </AnimatePresence>
