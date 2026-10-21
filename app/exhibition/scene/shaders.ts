@@ -8,10 +8,15 @@ export const pointVertex = /* glsl */ `
   uniform float uScale;
   uniform float uTime;
   uniform float uBrightness;
+  uniform float uSwirl;
   varying vec3 vColor;
 
   void main() {
-    vec4 mvPosition = modelViewMatrix * vec4(position, 1.0);
+    // The galaxy turns inside the globe, faster near the core than at the rim, as a real galaxy does.
+    float turn = uTime * uSwirl / (0.7 + length(position.xz));
+    vec3 p = position;
+    p.xz = mat2(cos(turn), -sin(turn), sin(turn), cos(turn)) * position.xz;
+    vec4 mvPosition = modelViewMatrix * vec4(p, 1.0);
     // Stars breathe at their own rate, so the disc never looks like a still image.
     float twinkle = 0.78 + 0.22 * sin(uTime * (0.5 + aSeed * 1.3) + aSeed * 40.0);
     gl_PointSize = clamp(aSize * uScale * uPixelRatio * (9.0 / -mvPosition.z), 1.0, 48.0);
@@ -31,6 +36,33 @@ export const pointFragment = /* glsl */ `
     float alpha = clamp(core * 0.55 + glow * 0.55, 0.0, 1.0);
     // Additive blending: the colour is already scaled by its alpha.
     gl_FragColor = vec4(vColor * alpha, 1.0);
+  }
+`;
+
+/** The globe's edge: a soft glow, brightest where the surface turns away from the visitor. */
+export const atmosphereVertex = /* glsl */ `
+  varying vec3 vNormal;
+  varying vec3 vView;
+
+  void main() {
+    vec4 mvPosition = modelViewMatrix * vec4(position, 1.0);
+    vNormal = normalize(normalMatrix * normal);
+    vView = normalize(-mvPosition.xyz);
+    gl_Position = projectionMatrix * mvPosition;
+  }
+`;
+
+export const atmosphereFragment = /* glsl */ `
+  uniform float uStrength;
+  varying vec3 vNormal;
+  varying vec3 vView;
+
+  void main() {
+    float facing = clamp(abs(dot(normalize(vNormal), normalize(vView))), 0.0, 1.0);
+    float rim = pow(1.0 - facing, 3.2);
+    // Cyan at the very edge, shading to violet a little inside it. Additive, so it only brightens.
+    vec3 color = mix(vec3(0.55, 0.38, 0.95), vec3(0.45, 0.9, 1.0), smoothstep(0.0, 0.5, rim));
+    gl_FragColor = vec4(color * rim * uStrength, 1.0);
   }
 `;
 

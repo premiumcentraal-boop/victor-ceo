@@ -1,6 +1,6 @@
 import * as THREE from "three";
-import { DISC_LAYERS, discLayerPoints, homeDirection, placePictures, type DiscLayer } from "./layout";
-import { fullscreenVertex, nebulaFragment, pointFragment, pointVertex } from "./shaders";
+import { GLOBE, GLOBE_LAYERS, globeLayerPoints, homeDirection, placePictures, type GlobeLayer } from "./layout";
+import { atmosphereFragment, atmosphereVertex, fullscreenVertex, nebulaFragment, pointFragment, pointVertex } from "./shaders";
 
 /** How much detail the scene draws. Steps down when a device cannot hold its frame rate. */
 export type QualityTier = "high" | "medium" | "low";
@@ -16,9 +16,11 @@ const TIER_ORDER: QualityTier[] = ["high", "medium", "low"];
 const SLOW_FRAME_MS = 26;
 
 const FOV_LANDSCAPE = 40;
-/** On a portrait screen the disc is framed by its width, so this is the half-width kept in view. */
-const PHONE_HALF_WIDTH = 3.4;
-const BASE_HOME_DISTANCE = 12.5;
+/** On a portrait screen the globe is framed by its width, so this is the half-width kept in view. */
+const PHONE_HALF_WIDTH = 4.6;
+const BASE_HOME_DISTANCE = 11.5;
+/** How fast the galaxy turns inside the globe. The core turns faster than the rim. */
+const SWIRL = 0.55;
 const MAX_HOME_DISTANCE = 22;
 
 export const PICTURE_WIDTH = 1.35;
@@ -119,7 +121,8 @@ export class GalaxyScene {
   private readonly textures: THREE.Texture[] = [];
   /** Each picture sharpens once. A second visit reuses the sharp texture, instead of adding another. */
   private readonly focusLoads = new Map<number, Promise<void>>();
-  private readonly layers: { points: THREE.Points; material: THREE.ShaderMaterial; count: number; spin: number }[] = [];
+  private readonly layers: { points: THREE.Points; material: THREE.ShaderMaterial; count: number }[] = [];
+  private atmosphere: THREE.Mesh | null = null;
   private readonly nebula: NebulaPass;
   private readonly fixedStep: boolean;
   private readonly forcedTier: boolean;
@@ -166,7 +169,7 @@ export class GalaxyScene {
     this.scene.add(this.group);
     this.haloTexture = makeHaloTexture();
 
-    this.buildDisc();
+    this.buildGlobe();
     this.buildPictures(images);
     this.nebula = this.buildNebula();
 
@@ -311,7 +314,7 @@ export class GalaxyScene {
 
   /**
    * The disc's rotation that turns this picture to face the visitor's home view, choosing the
-   * equivalent turn nearest to `current`, so the disc never spins the long way round.
+   * equivalent turn nearest to `current`, so the globe never spins the long way round.
    */
   recenterRotation(index: number, current: number): number {
     const picture = this.pictures[index];
@@ -375,6 +378,10 @@ export class GalaxyScene {
       layer.points.geometry.dispose();
       layer.material.dispose();
     }
+    if (this.atmosphere) {
+      this.atmosphere.geometry.dispose();
+      (this.atmosphere.material as THREE.Material).dispose();
+    }
     for (const picture of this.pictures) {
       if (picture.fade) (picture.fade.material as THREE.Material).dispose();
       picture.mesh.geometry.dispose();
@@ -401,15 +408,13 @@ export class GalaxyScene {
 
   // ── Construction ─────────────────────────────────────────────────────────
 
-  private buildDisc(): void {
-    const layerOrder: DiscLayer[] = ["dust", "stars", "core"];
-    const brightness: Record<DiscLayer, number> = { dust: 0.55, stars: 1.1, core: 1.35 };
-    const scale: Record<DiscLayer, number> = { dust: 2.2, stars: 2.8, core: 3.4 };
-    // The dust turns slowly against the disc. The difference reads as depth.
-    const spin: Record<DiscLayer, number> = { dust: -0.035, stars: 0, core: 0 };
+  private buildGlobe(): void {
+    const layerOrder: GlobeLayer[] = ["dust", "stars", "core"];
+    const brightness: Record<GlobeLayer, number> = { dust: 0.9, stars: 1.5, core: 1.6 };
+    const scale: Record<GlobeLayer, number> = { dust: 2.2, stars: 2.8, core: 3.4 };
 
     for (const name of layerOrder) {
-      const data = discLayerPoints(name);
+      const data = globeLayerPoints(name);
       const geometry = new THREE.BufferGeometry();
       geometry.setAttribute("position", new THREE.BufferAttribute(data.positions, 3));
       geometry.setAttribute("aColor", new THREE.BufferAttribute(data.colors, 3));
@@ -423,6 +428,7 @@ export class GalaxyScene {
           uScale: { value: scale[name] },
           uTime: { value: 0 },
           uBrightness: { value: brightness[name] },
+          uSwirl: { value: SWIRL },
         },
         transparent: true,
         depthWrite: false,
@@ -430,8 +436,20 @@ export class GalaxyScene {
       });
       const points = new THREE.Points(geometry, material);
       this.group.add(points);
-      this.layers.push({ points, material, count: DISC_LAYERS[name].count, spin: spin[name] });
+      this.layers.push({ points, material, count: GLOBE_LAYERS[name].count });
     }
+
+    // The globe's edge: a soft glow round the galaxy, so it reads as a world rather than a cloud.
+    const edge = new THREE.ShaderMaterial({
+      vertexShader: atmosphereVertex,
+      fragmentShader: atmosphereFragment,
+      uniforms: { uStrength: { value: 0.8 } },
+      transparent: true,
+      depthWrite: false,
+      blending: THREE.AdditiveBlending,
+    });
+    this.atmosphere = new THREE.Mesh(new THREE.SphereGeometry(GLOBE.radius * 1.04, 96, 64), edge);
+    this.group.add(this.atmosphere);
   }
 
   private buildPictures(images: string[]): void {
@@ -697,7 +715,6 @@ export class GalaxyScene {
 
     for (const layer of this.layers) {
       layer.material.uniforms.uTime.value = this.elapsed;
-      layer.points.rotation.y += layer.spin * dt;
     }
     this.nebula.uniforms.uTime.value = this.elapsed;
 

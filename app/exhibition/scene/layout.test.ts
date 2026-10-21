@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { DISC_LAYERS, discLayerPoints, homeDirection, placePictures, pictureTabOrder, seededRandom } from "./layout";
+import { GLOBE, GLOBE_LAYERS, globeLayerPoints, homeDirection, placePictures, pictureTabOrder, seededRandom } from "./layout";
 
 describe("seededRandom", () => {
   it("repeats the same sequence for the same seed", () => {
@@ -25,11 +25,11 @@ describe("homeDirection", () => {
   });
 });
 
-describe("discLayerPoints", () => {
-  it.each(Object.keys(DISC_LAYERS) as (keyof typeof DISC_LAYERS)[])("%s has one entry per point, and is the same every time", (layer) => {
-    const count = DISC_LAYERS[layer].count;
-    const first = discLayerPoints(layer);
-    const second = discLayerPoints(layer);
+describe("globeLayerPoints", () => {
+  it.each(Object.keys(GLOBE_LAYERS) as (keyof typeof GLOBE_LAYERS)[])("%s has one entry per point, and is the same every time", (layer) => {
+    const count = GLOBE_LAYERS[layer].count;
+    const first = globeLayerPoints(layer);
+    const second = globeLayerPoints(layer);
     expect(first.positions).toHaveLength(count * 3);
     expect(first.colors).toHaveLength(count * 3);
     expect(first.sizes).toHaveLength(count);
@@ -37,24 +37,42 @@ describe("discLayerPoints", () => {
     expect(second.positions).toEqual(first.positions);
   });
 
-  it("keeps the dust and stars inside the galaxy's radius", () => {
-    const { positions } = discLayerPoints("stars");
+  it.each(Object.keys(GLOBE_LAYERS) as (keyof typeof GLOBE_LAYERS)[])("%s stays inside the globe, so the edge is round", (layer) => {
+    const { positions } = globeLayerPoints(layer);
     for (let i = 0; i < positions.length; i += 3) {
-      const radius = Math.hypot(positions[i], positions[i + 2]);
-      expect(radius).toBeLessThan(DISC_LAYERS.stars.outer * 1.1);
+      const distance = Math.hypot(positions[i], positions[i + 1], positions[i + 2]);
+      expect(distance).toBeLessThanOrEqual(GLOBE.radius);
     }
+  });
+
+  it("fills the globe rather than sitting in a flat disc: points spread above and below the arms", () => {
+    const { positions } = globeLayerPoints("dust");
+    let above = 0;
+    let below = 0;
+    for (let i = 0; i < positions.length; i += 3) {
+      if (positions[i + 1] > 0.5) above++;
+      if (positions[i + 1] < -0.5) below++;
+    }
+    expect(above).toBeGreaterThan(500);
+    expect(below).toBeGreaterThan(500);
   });
 });
 
 describe("placePictures", () => {
-  it("places every picture with a unit facing vector, between the core and the rim", () => {
+  it("places every picture just outside the globe, with a unit facing vector", () => {
     const placements = placePictures(8, homeDirection());
     expect(placements).toHaveLength(8);
     for (const { position, normal } of placements) {
       expect(Math.hypot(normal[0], normal[1], normal[2])).toBeCloseTo(1, 10);
-      const radius = Math.hypot(position[0], position[2]);
-      expect(radius).toBeGreaterThan(2.0);
-      expect(radius).toBeLessThan(4.9 + 1e-9);
+      const distance = Math.hypot(position[0], position[1], position[2]);
+      expect(distance).toBeCloseTo(GLOBE.radius + GLOBE.pictureStandoff, 10);
+    }
+  });
+
+  it("keeps the pictures within about 25 degrees of the equator", () => {
+    for (const { position } of placePictures(8, homeDirection())) {
+      const latitude = Math.asin(position[1] / Math.hypot(position[0], position[1], position[2]));
+      expect(Math.abs(latitude)).toBeLessThan(0.5);
     }
   });
 
@@ -64,7 +82,7 @@ describe("placePictures", () => {
       for (let j = i + 1; j < placements.length; j++) {
         const a = placements[i].position;
         const b = placements[j].position;
-        expect(Math.hypot(a[0] - b[0], a[2] - b[2])).toBeGreaterThan(0.5);
+        expect(Math.hypot(a[0] - b[0], a[1] - b[1], a[2] - b[2])).toBeGreaterThan(0.5);
       }
     }
   });
@@ -76,7 +94,7 @@ describe("pictureTabOrder", () => {
     expect([...order].sort((a, b) => a - b)).toEqual([0, 1, 2, 3, 4, 5, 6, 7]);
   });
 
-  it("runs round the disc in angle order", () => {
+  it("runs round the globe in angle order", () => {
     const placements = placePictures(8, homeDirection());
     const angles = pictureTabOrder(8).map((index) => {
       const [x, , z] = placements[index].position;

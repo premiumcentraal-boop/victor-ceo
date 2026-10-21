@@ -39,9 +39,10 @@ export interface GalaxyHeroProps {
 
 const MIN_CAMERA_DISTANCE = 5;
 const MAX_CAMERA_DISTANCE = 25;
-const IMMERSED_DISTANCE = 6.2;
-/** Idle spin in radians per second, about 0.6° a second. */
-const BASE_SPIN = 0.0105;
+/** The camera's distance once the visitor has entered: just outside the pictures that orbit the globe. */
+const IMMERSED_DISTANCE = 9.5;
+/** Idle spin of the globe in radians per second, about 3° a second: a full turn in about two minutes. */
+const BASE_SPIN = 0.05;
 const DRAG_RADIANS_PER_PIXEL = 0.0035;
 const PINCH_ZOOM_SENSITIVITY = 1.15;
 /** Pinch zoom in the overview is kept within this range of the scroll position's distance. */
