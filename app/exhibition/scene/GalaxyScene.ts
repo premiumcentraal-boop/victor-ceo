@@ -1,6 +1,6 @@
 import * as THREE from "three";
-import { GLOBE, GLOBE_LAYERS, globeLayerPoints, homeDirection, placePictures, type GlobeLayer } from "./layout";
-import { atmosphereFragment, atmosphereVertex, fullscreenVertex, nebulaFragment, pointFragment, pointVertex } from "./shaders";
+import { GALAXY_LAYERS, galaxyLayerPoints, homeDirection, placePictures, type GalaxyLayer } from "./layout";
+import { fullscreenVertex, nebulaFragment, pointFragment, pointVertex } from "./shaders";
 
 /** How much detail the scene draws. Steps down when a device cannot hold its frame rate. */
 export type QualityTier = "high" | "medium" | "low";
@@ -16,10 +16,10 @@ const TIER_ORDER: QualityTier[] = ["high", "medium", "low"];
 const SLOW_FRAME_MS = 26;
 
 const FOV_LANDSCAPE = 40;
-/** On a portrait screen the globe is framed by its width, so this is the half-width kept in view. */
-const PHONE_HALF_WIDTH = 4.6;
-const BASE_HOME_DISTANCE = 11.5;
-/** How fast the galaxy turns inside the globe. The core turns faster than the rim. */
+/** On a portrait screen the ring of pictures is framed by its width, so this is the half-width kept in view. */
+const PHONE_HALF_WIDTH = 4.4;
+const BASE_HOME_DISTANCE = 13;
+/** How fast the galaxy turns. The core turns faster than the rim. */
 const SWIRL = 0.55;
 const MAX_HOME_DISTANCE = 22;
 
@@ -36,13 +36,13 @@ const AMBER = new THREE.Color(0xffd6aa);
 
 export interface ScenePicture {
   index: number;
-  /** Positions the picture on the disc and carries its lift. Its facing is set by `lookAt`. */
+  /** Positions the picture on the ring and carries its lift. Its facing is set by `lookAt`. */
   anchor: THREE.Group;
   mesh: THREE.Mesh;
   halo: THREE.Mesh;
   /** Width divided by height. Stays at 1 : √2 until the picture's own texture has loaded. */
   aspect: number;
-  /** Where the picture rests on the disc, and the direction it faces. */
+  /** Where the picture rests on the ring, and the direction it faces. */
   base: THREE.Vector3;
   normal: THREE.Vector3;
   /** 0 at rest, 1 when hovered or focused. Eased every frame. */
@@ -99,13 +99,13 @@ function initialTier(): QualityTier {
 }
 
 /**
- * The galaxy: one WebGL context, one render loop and no input handling. The caller turns the disc,
+ * The galaxy: one WebGL context, one render loop and no input handling. The caller turns the galaxy,
  * moves the camera, decides what a click means, and says which picture is highlighted. This class
  * draws what it is told to draw.
  */
 export class GalaxyScene {
   readonly camera: THREE.PerspectiveCamera;
-  /** The disc and its pictures. The caller turns it. */
+  /** The galaxy and its pictures. The caller turns it. */
   readonly group = new THREE.Group();
   readonly pictures: ScenePicture[] = [];
   readonly domElement: HTMLCanvasElement;
@@ -122,7 +122,6 @@ export class GalaxyScene {
   /** Each picture sharpens once. A second visit reuses the sharp texture, instead of adding another. */
   private readonly focusLoads = new Map<number, Promise<void>>();
   private readonly layers: { points: THREE.Points; material: THREE.ShaderMaterial; count: number }[] = [];
-  private atmosphere: THREE.Mesh | null = null;
   private readonly nebula: NebulaPass;
   private readonly fixedStep: boolean;
   private readonly forcedTier: boolean;
@@ -169,7 +168,7 @@ export class GalaxyScene {
     this.scene.add(this.group);
     this.haloTexture = makeHaloTexture();
 
-    this.buildGlobe();
+    this.buildGalaxy();
     this.buildPictures(images);
     this.nebula = this.buildNebula();
 
@@ -182,7 +181,7 @@ export class GalaxyScene {
     return this.lensFov;
   }
 
-  /** Distance from the centre at which the disc is framed on this screen. */
+  /** Distance from the centre at which the galaxy and its ring are framed on this screen. */
   get framingDistance(): number {
     return this.homeDistance;
   }
@@ -214,7 +213,7 @@ export class GalaxyScene {
 
   /**
    * Marks one picture as the one in focus. It stays lit, and the others dim, so the eye goes to it.
-   * Pass null to bring the whole disc back.
+   * Pass null to bring the whole galaxy back.
    */
   setFocus(index: number | null): void {
     this.focusedIndex = index;
@@ -313,8 +312,8 @@ export class GalaxyScene {
   }
 
   /**
-   * The disc's rotation that turns this picture to face the visitor's home view, choosing the
-   * equivalent turn nearest to `current`, so the globe never spins the long way round.
+   * The galaxy's rotation that turns this picture to face the visitor's home view, choosing the
+   * equivalent turn nearest to `current`, so the galaxy never spins the long way round.
    */
   recenterRotation(index: number, current: number): number {
     const picture = this.pictures[index];
@@ -378,10 +377,6 @@ export class GalaxyScene {
       layer.points.geometry.dispose();
       layer.material.dispose();
     }
-    if (this.atmosphere) {
-      this.atmosphere.geometry.dispose();
-      (this.atmosphere.material as THREE.Material).dispose();
-    }
     for (const picture of this.pictures) {
       if (picture.fade) (picture.fade.material as THREE.Material).dispose();
       picture.mesh.geometry.dispose();
@@ -408,13 +403,13 @@ export class GalaxyScene {
 
   // ── Construction ─────────────────────────────────────────────────────────
 
-  private buildGlobe(): void {
-    const layerOrder: GlobeLayer[] = ["dust", "stars", "core"];
-    const brightness: Record<GlobeLayer, number> = { dust: 0.9, stars: 1.5, core: 1.6 };
-    const scale: Record<GlobeLayer, number> = { dust: 2.2, stars: 2.8, core: 3.4 };
+  private buildGalaxy(): void {
+    const layerOrder: GalaxyLayer[] = ["dust", "stars", "core"];
+    const brightness: Record<GalaxyLayer, number> = { dust: 0.9, stars: 1.5, core: 1.6 };
+    const scale: Record<GalaxyLayer, number> = { dust: 2.2, stars: 2.8, core: 3.4 };
 
     for (const name of layerOrder) {
-      const data = globeLayerPoints(name);
+      const data = galaxyLayerPoints(name);
       const geometry = new THREE.BufferGeometry();
       geometry.setAttribute("position", new THREE.BufferAttribute(data.positions, 3));
       geometry.setAttribute("aColor", new THREE.BufferAttribute(data.colors, 3));
@@ -436,25 +431,12 @@ export class GalaxyScene {
       });
       const points = new THREE.Points(geometry, material);
       this.group.add(points);
-      this.layers.push({ points, material, count: GLOBE_LAYERS[name].count });
+      this.layers.push({ points, material, count: GALAXY_LAYERS[name].count });
     }
-
-    // The globe's edge: a soft glow round the galaxy, so it reads as a world rather than a cloud.
-    const edge = new THREE.ShaderMaterial({
-      vertexShader: atmosphereVertex,
-      fragmentShader: atmosphereFragment,
-      uniforms: { uStrength: { value: 0.8 } },
-      transparent: true,
-      depthWrite: false,
-      blending: THREE.AdditiveBlending,
-    });
-    this.atmosphere = new THREE.Mesh(new THREE.SphereGeometry(GLOBE.radius * 1.04, 96, 64), edge);
-    this.group.add(this.atmosphere);
   }
 
   private buildPictures(images: string[]): void {
-    const [fx, fy, fz] = homeDirection();
-    const placements = placePictures(images.length, [fx, fy, fz]);
+    const placements = placePictures(images.length);
     images.forEach((url, index) => {
       const placement = placements[index];
       const [px, py, pz] = placement.position;
