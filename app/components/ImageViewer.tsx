@@ -2,6 +2,7 @@ import { useState, useRef, useEffect, useCallback } from "react";
 import { createPortal } from "react-dom";
 import { motion, AnimatePresence } from "motion/react";
 import { X, Maximize, Minimize, ZoomIn, ZoomOut, RotateCcw } from "lucide-react";
+import { pictureSrc } from "../exhibition/data/pictures";
 
 interface ImageViewerProps {
   src: string;
@@ -21,8 +22,8 @@ export function ImageViewer({ src, index, onClose, skipEntrance = false, title }
   const isPanning = useRef(false);
   const lastPos = useRef({ x: 0, y: 0 });
 
-  // High-res version
-  const hiResSrc = src.replace(/w=\d+/, "w=2400");
+  // High-res version: the same Cloudinary picture, sized for the focus view.
+  const hiResSrc = pictureSrc(src, "focus");
 
   // Clamp pan so image always stays partially visible
   const clampPan = useCallback((px: number, py: number, z: number) => {

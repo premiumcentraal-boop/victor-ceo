@@ -27,6 +27,10 @@ const SQRT2 = Math.SQRT2;
 const HOVER_LIFT = 0.3;
 /** Largest tilt, in radians, a hovered picture turns towards the pointer. */
 const HOVER_TILT = 0.12;
+/** How quickly the high-resolution picture dissolves in, per second. */
+const FADE_RATE = 2.2;
+const CYAN = new THREE.Color(0x67e8f9);
+const AMBER = new THREE.Color(0xffd6aa);
 
 export interface ScenePicture {
   index: number;
@@ -43,6 +47,12 @@ export interface ScenePicture {
   hover: number;
   /** 0 normally, 1 when another picture is in focus. Eased every frame. */
   dim: number;
+  /** 0 when not visited this session, 1 once opened. Eased every frame. */
+  visited: number;
+  /** The high-resolution picture, while it dissolves in over the preview. */
+  fade: THREE.Mesh | null;
+  fadeProgress: number;
+  onFadeDone: (() => void) | null;
 }
 
 export interface GalaxySceneOptions {
@@ -107,6 +117,8 @@ export class GalaxyScene {
   private readonly loader = new THREE.TextureLoader();
   private readonly haloTexture: THREE.CanvasTexture;
   private readonly textures: THREE.Texture[] = [];
+  /** Each picture sharpens once. A second visit reuses the sharp texture, instead of adding another. */
+  private readonly focusLoads = new Map<number, Promise<void>>();
   private readonly layers: { points: THREE.Points; material: THREE.ShaderMaterial; count: number; spin: number }[] = [];
   private readonly nebula: NebulaPass;
   private readonly fixedStep: boolean;
@@ -128,6 +140,7 @@ export class GalaxyScene {
   private hoverTilt = { x: 0, y: 0 };
   private hoverRing = false;
   private focusedIndex: number | null = null;
+  private visitedSet: ReadonlySet<number> = new Set();
   private lensFov = FOV_LANDSCAPE;
   private resizeObserver: ResizeObserver | null = null;
   private visibilityObserver: IntersectionObserver | null = null;
@@ -245,6 +258,66 @@ export class GalaxyScene {
     this.hoverRing = ring;
   }
 
+  /** Marks the pieces this visitor has opened, so the galaxy remembers them. */
+  setVisited(visited: ReadonlySet<number>): void {
+    this.visitedSet = visited;
+  }
+
+  /**
+   * Loads the high-resolution picture and dissolves it in over the preview. Resolves when the swap
+   * is complete, or straight away if it cannot load: the preview stays in that case.
+   */
+  loadFocusTexture(index: number, url: string): Promise<void> {
+    const loaded = this.focusLoads.get(index);
+    if (loaded) return loaded;
+    const promise = new Promise<void>((resolve) => {
+      const picture = this.pictures[index];
+      if (this.disposed || !picture) return resolve();
+      this.loader.load(
+        url,
+        (texture) => {
+          if (this.disposed) {
+            texture.dispose();
+            return resolve();
+          }
+          texture.colorSpace = THREE.SRGBColorSpace;
+          texture.anisotropy = Math.min(4, this.renderer.capabilities.getMaxAnisotropy());
+          this.textures.push(texture);
+          const overlay = new THREE.Mesh(
+            picture.mesh.geometry,
+            new THREE.MeshBasicMaterial({ map: texture, transparent: true, opacity: 0, side: THREE.DoubleSide, depthWrite: false })
+          );
+          // A hair in front of the preview, so the dissolve reads as the same picture sharpening.
+          overlay.position.z = 0.006;
+          picture.mesh.add(overlay);
+          picture.fade = overlay;
+          picture.fadeProgress = 0;
+          picture.onFadeDone = resolve;
+        },
+        undefined,
+        () => resolve()
+      );
+    });
+    this.focusLoads.set(index, promise);
+    return promise;
+  }
+
+  /**
+   * The disc's rotation that turns this picture to face the visitor's home view, choosing the
+   * equivalent turn nearest to `current`, so the disc never spins the long way round.
+   */
+  recenterRotation(index: number, current: number): number {
+    const picture = this.pictures[index];
+    if (!picture) return current;
+    const [hx, , hz] = homeDirection();
+    const pictureAngle = Math.atan2(picture.base.z, picture.base.x);
+    const homeAngle = Math.atan2(hz, hx);
+    // A rotation of r turns a point's angle by -r, so r = pictureAngle - homeAngle brings it to the camera.
+    const target = pictureAngle - homeAngle;
+    const turns = Math.round((current - target) / (2 * Math.PI));
+    return target + turns * 2 * Math.PI;
+  }
+
   /** The picture under a pointer, or null. */
   pick(clientX: number, clientY: number): number | null {
     const rect = this.domElement.getBoundingClientRect();
@@ -296,6 +369,7 @@ export class GalaxyScene {
       layer.material.dispose();
     }
     for (const picture of this.pictures) {
+      if (picture.fade) (picture.fade.material as THREE.Material).dispose();
       picture.mesh.geometry.dispose();
       (picture.mesh.material as THREE.Material).dispose();
       picture.halo.geometry.dispose();
@@ -399,6 +473,10 @@ export class GalaxyScene {
         normal: new THREE.Vector3(nx, ny, nz),
         hover: 0,
         dim: 0,
+        visited: 0,
+        fade: null,
+        fadeProgress: 0,
+        onFadeDone: null,
       });
 
       this.loader.crossOrigin = "anonymous";
@@ -574,11 +652,32 @@ export class GalaxyScene {
       picture.anchor.position.copy(picture.base).addScaledVector(picture.normal, HOVER_LIFT * h);
       picture.mesh.rotation.set(-this.hoverTilt.y * HOVER_TILT * h, this.hoverTilt.x * HOVER_TILT * h, 0);
 
+      picture.visited += ((this.visitedSet.has(picture.index) ? 1 : 0) - picture.visited) * ease;
       const dimmed = 1 - 0.65 * picture.dim;
       (picture.mesh.material as THREE.MeshBasicMaterial).opacity = 0.96 * dimmed;
       const halo = picture.halo.material as THREE.MeshBasicMaterial;
       const ring = picture.index === this.hoveredIndex && this.hoverRing ? 0.55 : 0;
-      halo.opacity = (0.3 + 0.35 * h + ring * h) * dimmed;
+      halo.color.lerpColors(CYAN, AMBER, picture.visited * 0.85);
+      halo.opacity = (0.3 + 0.35 * h + ring * h + 0.1 * picture.visited) * dimmed;
+
+      if (picture.fade) {
+        picture.fadeProgress = Math.min(1, picture.fadeProgress + dt * FADE_RATE);
+        const fade = picture.fade;
+        const fadeMaterial = fade.material as THREE.MeshBasicMaterial;
+        fadeMaterial.opacity = picture.fadeProgress * dimmed;
+        if (picture.fadeProgress >= 1) {
+          // The sharp picture takes over the mesh, and the overlay is removed.
+          const sharp = fadeMaterial.map;
+          (picture.mesh.material as THREE.MeshBasicMaterial).map = sharp;
+          (picture.mesh.material as THREE.MeshBasicMaterial).needsUpdate = true;
+          picture.mesh.remove(fade);
+          fadeMaterial.dispose();
+          picture.fade = null;
+          const done = picture.onFadeDone;
+          picture.onFadeDone = null;
+          done?.();
+        }
+      }
     }
   }
 
