@@ -78,9 +78,9 @@ interface LayerSpec {
 }
 
 export const GALAXY_LAYERS: Record<GalaxyLayer, LayerSpec> = {
-  dust: { count: 10000, inner: 0.4, outer: GALAXY.outerRadius * 0.95, scatter: 0.34, thickness: 0.3, size: [0.6, 1.2], seed: 11 },
-  stars: { count: 6000, inner: 0.35, outer: GALAXY.outerRadius, scatter: 0.13, thickness: 0.14, size: [0.9, 1.9], seed: 23 },
-  core: { count: 1500, inner: 0.15, outer: 1.3, scatter: 0.8, thickness: 0.22, size: [1.6, 3.0], seed: 37 },
+  dust: { count: 14000, inner: 0.4, outer: GALAXY.outerRadius * 0.95, scatter: 0.34, thickness: 0.3, size: [0.6, 1.2], seed: 11 },
+  stars: { count: 9000, inner: 0.35, outer: GALAXY.outerRadius, scatter: 0.13, thickness: 0.14, size: [0.9, 1.9], seed: 23 },
+  core: { count: 2500, inner: 0.15, outer: 1.3, scatter: 0.8, thickness: 0.22, size: [1.6, 3.0], seed: 37 },
 };
 
 export interface LayerPoints {
@@ -130,6 +130,45 @@ export function galaxyLayerPoints(layer: GalaxyLayer): LayerPoints {
     colors[i * 3 + 2] = tinted[2] + jitter;
 
     sizes[i] = spec.size[0] + (spec.size[1] - spec.size[0]) * Math.pow(random(), 3);
+    seeds[i] = random();
+  }
+
+  return { positions, colors, sizes, seeds };
+}
+
+/** The far starfield: a shell of stars round the whole scene, so the galaxy sits in a deep sky. */
+export const STARFIELD = {
+  count: 2600,
+  inner: 36,
+  outer: 70,
+} as const;
+
+/** Stars on a shell well beyond the galaxy, in uniform directions, so they read as a deep background. */
+export function starfieldPoints(seed = 53): LayerPoints {
+  const random = seededRandom(seed);
+  const count = STARFIELD.count;
+  const positions = new Float32Array(count * 3);
+  const colors = new Float32Array(count * 3);
+  const sizes = new Float32Array(count);
+  const seeds = new Float32Array(count);
+
+  for (let i = 0; i < count; i++) {
+    const z = random() * 2 - 1;
+    const azimuth = random() * TAU;
+    const across = Math.sqrt(1 - z * z);
+    const radius = STARFIELD.inner + (STARFIELD.outer - STARFIELD.inner) * random();
+    positions[i * 3] = radius * across * Math.cos(azimuth);
+    positions[i * 3 + 1] = radius * z;
+    positions[i * 3 + 2] = radius * across * Math.sin(azimuth);
+
+    // Most stars are cool white; a few are warm, like the core.
+    const base = random() < 0.15 ? WARM : COOL;
+    const jitter = (random() - 0.5) * 0.1;
+    colors[i * 3] = base[0] + jitter;
+    colors[i * 3 + 1] = base[1] + jitter;
+    colors[i * 3 + 2] = base[2] + jitter;
+
+    sizes[i] = 0.7 + 1.3 * Math.pow(random(), 3);
     seeds[i] = random();
   }
 

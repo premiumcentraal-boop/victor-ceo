@@ -1,6 +1,6 @@
 import * as THREE from "three";
-import { GALAXY_LAYERS, galaxyLayerPoints, homeDirection, placePictures, type GalaxyLayer } from "./layout";
-import { fullscreenVertex, nebulaFragment, pointFragment, pointVertex } from "./shaders";
+import { GALAXY, GALAXY_LAYERS, STARFIELD, galaxyLayerPoints, homeDirection, placePictures, starfieldPoints, type GalaxyLayer } from "./layout";
+import { fullscreenVertex, hazeFragment, hazeVertex, nebulaFragment, pointFragment, pointVertex } from "./shaders";
 
 /** How much detail the scene draws. Steps down when a device cannot hold its frame rate. */
 export type QualityTier = "high" | "medium" | "low";
@@ -21,6 +21,8 @@ const PHONE_HALF_WIDTH = 4.4;
 const BASE_HOME_DISTANCE = 13;
 /** How fast the galaxy turns. The core turns faster than the rim. */
 const SWIRL = 0.55;
+/** The glow of the spiral arms, flat in the galaxy's plane. It stays inside the ring of pictures. */
+const HAZE_RADIUS = GALAXY.outerRadius * 1.1;
 const MAX_HOME_DISTANCE = 22;
 
 export const PICTURE_WIDTH = 1.35;
@@ -122,6 +124,8 @@ export class GalaxyScene {
   /** Each picture sharpens once. A second visit reuses the sharp texture, instead of adding another. */
   private readonly focusLoads = new Map<number, Promise<void>>();
   private readonly layers: { points: THREE.Points; material: THREE.ShaderMaterial; count: number }[] = [];
+  private haze: THREE.Mesh<THREE.PlaneGeometry, THREE.ShaderMaterial> | null = null;
+  private coreGlow: THREE.Sprite | null = null;
   private readonly nebula: NebulaPass;
   private readonly fixedStep: boolean;
   private readonly forcedTier: boolean;
@@ -169,6 +173,7 @@ export class GalaxyScene {
     this.haloTexture = makeHaloTexture();
 
     this.buildGalaxy();
+    this.buildStarfield();
     this.buildPictures(images);
     this.nebula = this.buildNebula();
 
@@ -386,6 +391,14 @@ export class GalaxyScene {
     }
     this.textures.forEach((t) => t.dispose());
     this.haloTexture.dispose();
+    if (this.haze) {
+      this.haze.geometry.dispose();
+      this.haze.material.dispose();
+    }
+    if (this.coreGlow) {
+      this.coreGlow.material.map?.dispose();
+      this.coreGlow.material.dispose();
+    }
     this.nebula.target.dispose();
 
     this.renderer.dispose();
@@ -433,6 +446,80 @@ export class GalaxyScene {
       this.group.add(points);
       this.layers.push({ points, material, count: GALAXY_LAYERS[name].count });
     }
+
+    this.buildHaze();
+    this.buildCoreGlow();
+  }
+
+  /** The spiral arms as a glow, flat in the galaxy's plane, turning with the stars. */
+  private buildHaze(): void {
+    const material = new THREE.ShaderMaterial({
+      vertexShader: hazeVertex,
+      fragmentShader: hazeFragment,
+      uniforms: {
+        uTime: { value: 0 },
+        uSwirl: { value: SWIRL },
+        uOuter: { value: HAZE_RADIUS },
+        uInner: { value: GALAXY.innerRadius },
+        uArms: { value: GALAXY.arms },
+        uWinding: { value: GALAXY.winding },
+        uIntensity: { value: 0.9 },
+      },
+      transparent: true,
+      depthWrite: false,
+      blending: THREE.AdditiveBlending,
+    });
+    this.haze = new THREE.Mesh(new THREE.PlaneGeometry(HAZE_RADIUS * 2, HAZE_RADIUS * 2), material);
+    this.haze.rotation.x = -Math.PI / 2;
+    this.group.add(this.haze);
+  }
+
+  /** A soft, bright core, so the centre of the galaxy burns. */
+  private buildCoreGlow(): void {
+    const canvas = document.createElement("canvas");
+    canvas.width = 128;
+    canvas.height = 128;
+    const context = canvas.getContext("2d");
+    if (context) {
+      const gradient = context.createRadialGradient(64, 64, 0, 64, 64, 64);
+      gradient.addColorStop(0, "rgba(255, 255, 255, 1)");
+      gradient.addColorStop(0.22, "rgba(255, 220, 170, 0.6)");
+      gradient.addColorStop(1, "rgba(255, 200, 140, 0)");
+      context.fillStyle = gradient;
+      context.fillRect(0, 0, 128, 128);
+    }
+    const map = new THREE.CanvasTexture(canvas);
+    const material = new THREE.SpriteMaterial({ map, blending: THREE.AdditiveBlending, transparent: true, depthWrite: false });
+    this.coreGlow = new THREE.Sprite(material);
+    this.coreGlow.scale.set(2.8, 2.8, 1);
+    this.group.add(this.coreGlow);
+  }
+
+  /** A far starfield on a shell round the scene. It does not turn with the galaxy, so it reads as depth. */
+  private buildStarfield(): void {
+    const data = starfieldPoints();
+    const geometry = new THREE.BufferGeometry();
+    geometry.setAttribute("position", new THREE.BufferAttribute(data.positions, 3));
+    geometry.setAttribute("aColor", new THREE.BufferAttribute(data.colors, 3));
+    geometry.setAttribute("aSize", new THREE.BufferAttribute(data.sizes, 1));
+    geometry.setAttribute("aSeed", new THREE.BufferAttribute(data.seeds, 1));
+    const material = new THREE.ShaderMaterial({
+      vertexShader: pointVertex,
+      fragmentShader: pointFragment,
+      uniforms: {
+        uPixelRatio: { value: this.renderer.getPixelRatio() },
+        uScale: { value: 2.6 },
+        uTime: { value: 0 },
+        uBrightness: { value: 1.0 },
+        uSwirl: { value: 0 },
+      },
+      transparent: true,
+      depthWrite: false,
+      blending: THREE.AdditiveBlending,
+    });
+    const points = new THREE.Points(geometry, material);
+    this.scene.add(points);
+    this.layers.push({ points, material, count: STARFIELD.count });
   }
 
   private buildPictures(images: string[]): void {
@@ -525,7 +612,7 @@ export class GalaxyScene {
     const uniforms = {
       uTime: { value: 0 },
       uResolution: { value: new THREE.Vector2(1, 1) },
-      uIntensity: { value: 1.7 },
+      uIntensity: { value: 2.0 },
     };
     const camera = new THREE.OrthographicCamera(-1, 1, 1, -1, 0, 1);
 
@@ -699,6 +786,8 @@ export class GalaxyScene {
       layer.material.uniforms.uTime.value = this.elapsed;
     }
     this.nebula.uniforms.uTime.value = this.elapsed;
+    if (this.haze) this.haze.material.uniforms.uTime.value = this.elapsed;
+    if (this.coreGlow) this.coreGlow.material.opacity = 0.8 + 0.12 * Math.sin(this.elapsed * 0.7);
 
     this.options.onFrame?.(dt, this.elapsed);
     this.updateHover(dt);

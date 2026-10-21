@@ -58,6 +58,9 @@ const EXIT_BULGE = 1.6;
 const SWIPE_CLOSE_PX = 110;
 const SWIPE_STEP_PX = 80;
 const RECENTER_RATE = 2.4;
+/** How far the camera leans towards the pointer, in world units, at the edge of the galaxy. */
+const PARALLAX_SIDE = 0.45;
+const PARALLAX_UP = 0.3;
 /** The opening pulls the camera in from this much further out, over INTRO_SECONDS. */
 const INTRO_PULL = 0.6;
 const INTRO_SECONDS = 3.2;
@@ -182,6 +185,9 @@ export function GalaxyHero({
     const activePointers = new Map<number, { x: number; y: number }>();
     // The camera looks a little below the centre, so the galaxy sits above the controls at the foot of the page.
     const homeLook = new THREE.Vector3(0, -0.6, 0);
+    // Where the pointer is over the galaxy, from -1 to 1 on each axis. The camera leans towards it.
+    const parallaxTarget = { x: 0, y: 0 };
+    const parallax = { x: 0, y: 0 };
 
     const setState = (next: FlyState) => {
       state = next;
@@ -362,7 +368,15 @@ export function GalaxyHero({
       const header = headerHeight();
       if (introT < 1) introT = Math.min(1, introT + dt / INTRO_SECONDS);
       if (state === "IDLE") {
-        applyPose(dollyPose());
+        const pose = dollyPose();
+        if (!reduced) {
+          parallax.x = springLerp(parallax.x, parallaxTarget.x, 2.5, dt);
+          parallax.y = springLerp(parallax.y, parallaxTarget.y, 2.5, dt);
+          pose.position
+            .addScaledVector(RIGHT.clone().applyQuaternion(pose.quaternion), parallax.x * PARALLAX_SIDE)
+            .addScaledVector(UP.clone().applyQuaternion(pose.quaternion), parallax.y * PARALLAX_UP);
+        }
+        applyPose(pose);
         setShift(0);
       } else if (state === "FLYING_IN" && move && focusPicture !== null) {
         const target = focusPose(focusPicture);
@@ -556,6 +570,8 @@ export function GalaxyHero({
       if (e.pointerType === "mouse") {
         finishPointer(e, false);
         highlight(null);
+        parallaxTarget.x = 0;
+        parallaxTarget.y = 0;
       }
     };
 
@@ -572,11 +588,15 @@ export function GalaxyHero({
       if (state !== "IDLE") {
         el.style.cursor = state === "FOCUSED" ? "zoom-in" : "default";
         highlight(null);
+        parallaxTarget.x = 0;
+        parallaxTarget.y = 0;
         return;
       }
       if (isDragging) {
         el.style.cursor = "grabbing";
         highlight(null);
+        parallaxTarget.x = 0;
+        parallaxTarget.y = 0;
         return;
       }
       const index = galaxy.pick(e.clientX, e.clientY);
@@ -587,6 +607,8 @@ export function GalaxyHero({
         y: -((e.clientY - rect.top) / rect.height) * 2 + 1,
       };
       highlight(index, nextTilt, false);
+      parallaxTarget.x = nextTilt.x;
+      parallaxTarget.y = nextTilt.y;
     };
 
     // Esc leaves the focused view, and the arrow keys step between pieces.

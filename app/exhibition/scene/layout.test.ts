@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { GALAXY, GALAXY_LAYERS, ORBIT, galaxyLayerPoints, homeDirection, placePictures, pictureTabOrder, seededRandom } from "./layout";
+import { GALAXY, GALAXY_LAYERS, ORBIT, STARFIELD, galaxyLayerPoints, homeDirection, placePictures, pictureTabOrder, seededRandom, starfieldPoints } from "./layout";
 
 const TAU = Math.PI * 2;
 
@@ -104,5 +104,24 @@ describe("pictureTabOrder", () => {
     for (let k = 1; k < angles.length; k++) {
       expect((angles[k] - angles[k - 1] + TAU) % TAU).toBeCloseTo(TAU / 8, 10);
     }
+  });
+});
+
+describe("starfieldPoints", () => {
+  it("has one entry per star, and lies on a shell well beyond the galaxy", () => {
+    const { positions, colors, sizes, seeds } = starfieldPoints();
+    expect(positions).toHaveLength(STARFIELD.count * 3);
+    expect(colors).toHaveLength(STARFIELD.count * 3);
+    expect(sizes).toHaveLength(STARFIELD.count);
+    expect(seeds).toHaveLength(STARFIELD.count);
+    for (let i = 0; i < positions.length; i += 3) {
+      const distance = Math.hypot(positions[i], positions[i + 1], positions[i + 2]);
+      expect(distance).toBeGreaterThanOrEqual(STARFIELD.inner - 1e-3);
+      expect(distance).toBeLessThanOrEqual(STARFIELD.outer + 1e-3);
+    }
+  });
+
+  it("is the same every time, so the sky does not change between visits", () => {
+    expect(starfieldPoints().positions).toEqual(starfieldPoints().positions);
   });
 });
