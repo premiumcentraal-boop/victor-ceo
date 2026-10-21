@@ -13,6 +13,7 @@ export function TheExhibition() {
 
   // Stable reference — prevents Three.js scene from remounting on every render
   const imageUrls = useMemo(() => galleryImages.map(g => pictureSrc(g.url, "scene")), []);
+  const galleryTitles = useMemo(() => galleryImages.map(g => g.title), []);
 
   // ── Scroll scene ──
   // The hero is a scene the page scrolls through. The stage stays pinned while the scroll moves the camera.
@@ -111,6 +112,7 @@ export function TheExhibition() {
           <div className="absolute inset-0 z-[3]">
             <GalaxyHero
               images={imageUrls}
+              titles={galleryTitles}
               onImageClick={handleSphereClick}
               focusedIndex={focusedIndex}
               onFlyInComplete={handleFlyInComplete}
