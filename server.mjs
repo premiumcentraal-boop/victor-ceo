@@ -46,8 +46,9 @@ function pickEncoding(acceptEncoding = "") {
   return null;
 }
 
-function compress(filePath, file, encoding) {
-  const key = `${filePath}:${encoding}`;
+function compress(filePath, file, encoding, modifiedAt) {
+  // Keyed by modification time, so a rebuild never serves stale compressed files.
+  const key = `${filePath}:${modifiedAt}:${encoding}`;
   if (!compressedCache.has(key)) {
     const body = encoding === "br"
       ? zlib.brotliCompressSync(file, { params: { [zlib.constants.BROTLI_PARAM_QUALITY]: 9 } })
@@ -60,6 +61,7 @@ function compress(filePath, file, encoding) {
 async function serveFile(filePath, request, response) {
   const ext = path.extname(filePath);
   const file = await readFile(filePath);
+  const { mtimeMs } = await stat(filePath);
   const headers = {
     "Content-Type": mimeTypes[ext] || "application/octet-stream",
     "Cache-Control": ext === ".html" ? "no-cache" : "public, max-age=31536000, immutable",
@@ -70,7 +72,7 @@ async function serveFile(filePath, request, response) {
     headers.Vary = "Accept-Encoding";
     const encoding = pickEncoding(request.headers["accept-encoding"]);
     if (encoding) {
-      body = compress(filePath, file, encoding);
+      body = compress(filePath, file, encoding, mtimeMs);
       headers["Content-Encoding"] = encoding;
     }
   }

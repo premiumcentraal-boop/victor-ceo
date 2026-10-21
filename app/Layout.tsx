@@ -28,7 +28,7 @@ export function Layout() {
   }, []);
 
   return (
-    <div className="min-h-screen bg-[#010101] text-white font-sans overflow-x-hidden selection:bg-cyan-500/30 flex flex-col relative">
+    <div className="min-h-screen bg-[#010101] text-white font-sans overflow-x-clip selection:bg-cyan-500/30 flex flex-col relative">
       <BackgroundEffect />
 
       {/* Top Navigation / App Title */}
