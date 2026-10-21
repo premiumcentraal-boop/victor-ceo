@@ -44,7 +44,7 @@ export const FocusCaption = forwardRef<HTMLHeadingElement, FocusCaptionProps>(fu
         </button>
 
         <div className="flex min-w-0 flex-1 flex-col items-center text-center">
-          <span className="text-[10px] font-mono tracking-widest text-cyan-300/80 uppercase">{count}</span>
+          <span className="text-xs font-mono tracking-widest text-cyan-300 uppercase">{count}</span>
           <h2
             ref={titleRef}
             tabIndex={-1}
@@ -53,10 +53,10 @@ export const FocusCaption = forwardRef<HTMLHeadingElement, FocusCaptionProps>(fu
           >
             {title}
           </h2>
-          <span className="mt-0.5 hidden text-[10px] font-mono tracking-widest text-white/40 uppercase sm:block">
+          <span className="mt-0.5 hidden text-xs font-mono tracking-widest text-white/70 uppercase sm:block">
             Scroll or pinch to zoom · Drag to pan · Esc to close
           </span>
-          <span className="mt-0.5 text-[10px] font-mono tracking-widest text-white/40 uppercase sm:hidden">
+          <span className="mt-0.5 text-xs font-mono tracking-widest text-white/70 uppercase sm:hidden">
             Pinch to zoom · Swipe down to close
           </span>
         </div>

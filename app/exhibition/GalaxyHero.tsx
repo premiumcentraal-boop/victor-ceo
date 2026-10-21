@@ -31,6 +31,8 @@ export interface GalaxyHeroProps {
   onUnsupported?: () => void;
   /** Page scroll progress, 0 (overview) to 1 (immersed). The page owns the scroll; the galaxy only reads it. */
   scrollProgressRef?: MutableRefObject<number>;
+  /** Opens the overview from further out, pulling in over a few seconds. Read once, when the galaxy mounts. */
+  intro?: boolean;
 }
 
 const MIN_CAMERA_DISTANCE = 5;
@@ -53,11 +55,18 @@ const EXIT_BULGE = 1.6;
 const SWIPE_CLOSE_PX = 110;
 const SWIPE_STEP_PX = 80;
 const RECENTER_RATE = 2.4;
+/** The opening pulls the camera in from this much further out, over INTRO_SECONDS. */
+const INTRO_PULL = 0.6;
+const INTRO_SECONDS = 3.2;
 const UP = new THREE.Vector3(0, 1, 0);
 const RIGHT = new THREE.Vector3(1, 0, 0);
 
 function springLerp(current: number, target: number, speed: number, dt: number): number {
   return current + (target - current) * (1 - Math.exp(-speed * dt));
+}
+
+function easeOutCubic(t: number): number {
+  return 1 - Math.pow(1 - t, 3);
 }
 
 function pad(n: number): string {
@@ -82,8 +91,10 @@ export function GalaxyHero({
   onHiResState,
   onUnsupported,
   scrollProgressRef,
+  intro = false,
 }: GalaxyHeroProps) {
   const containerRef = useRef<HTMLDivElement>(null);
+  const introRef = useRef(intro);
   const labelRef = useRef<HTMLDivElement>(null);
   const buttonRefs = useRef<(HTMLButtonElement | null)[]>([]);
   const highlightRef = useRef<(index: number | null, tilt?: { x: number; y: number }, ring?: boolean) => void>(() => {});
@@ -157,6 +168,8 @@ export function GalaxyHero({
     const focusPan = { x: 0, y: 0 };
     let focusPicture: number | null = null;
     let move: FocusMove | null = null;
+    // 0 at the start of the opening, 1 once the camera has settled into the overview.
+    let introT = introRef.current ? 0 : 1;
     let shiftApplied = 0;
     const activePointers = new Map<number, { x: number; y: number }>();
     const homeLook = new THREE.Vector3(0, 0, 0);
@@ -205,8 +218,9 @@ export function GalaxyHero({
     const dollyPose = (): Pose => {
       const progress = scrollProgressRef?.current ?? 0;
       const eased = progress * progress * (3 - 2 * progress);
+      const pull = 1 + INTRO_PULL * (1 - easeOutCubic(introT));
       const distance = THREE.MathUtils.clamp(
-        THREE.MathUtils.lerp(galaxy.framingDistance, IMMERSED_DISTANCE, eased) * zoom,
+        THREE.MathUtils.lerp(galaxy.framingDistance, IMMERSED_DISTANCE, eased) * zoom * pull,
         MIN_CAMERA_DISTANCE,
         MAX_CAMERA_DISTANCE
       );
@@ -330,6 +344,7 @@ export function GalaxyHero({
 
       // ── The camera ──
       const header = headerHeight();
+      if (introT < 1) introT = Math.min(1, introT + dt / INTRO_SECONDS);
       if (state === "IDLE") {
         applyPose(dollyPose());
         setShift(0);
@@ -621,7 +636,7 @@ export function GalaxyHero({
       {/* The label follows the highlighted picture. It is decoration; the list below carries the names. */}
       <div ref={labelRef} aria-hidden="true" className="pointer-events-none absolute left-0 top-0 z-30 opacity-0 transition-opacity duration-300">
         <div className="-translate-x-1/2 -translate-y-full -mt-5 flex flex-col items-center gap-1 whitespace-nowrap">
-          <span className="text-[10px] font-mono text-cyan-300/80 tracking-widest uppercase">{activeCount}</span>
+          <span className="text-xs font-mono text-cyan-300 tracking-widest uppercase">{activeCount}</span>
           <span className="text-xl text-white" style={{ fontFamily: "'Instrument Serif', serif" }}>{activeLabel}</span>
         </div>
       </div>
