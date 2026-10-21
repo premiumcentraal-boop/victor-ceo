@@ -33,6 +33,8 @@ export interface GalaxyHeroProps {
   scrollProgressRef?: MutableRefObject<number>;
   /** Opens the overview from further out, pulling in over a few seconds. Read once, when the galaxy mounts. */
   intro?: boolean;
+  /** The visitor asked for reduced motion: no idle turn, no arcing flights, a still nebula. */
+  reducedMotion?: boolean;
 }
 
 const MIN_CAMERA_DISTANCE = 5;
@@ -58,6 +60,8 @@ const RECENTER_RATE = 2.4;
 /** The opening pulls the camera in from this much further out, over INTRO_SECONDS. */
 const INTRO_PULL = 0.6;
 const INTRO_SECONDS = 3.2;
+/** With reduced motion, a flight is a short glide with no arc, and the disc does not turn on its own. */
+const REDUCED_FLIGHT_SECONDS = 0.35;
 const UP = new THREE.Vector3(0, 1, 0);
 const RIGHT = new THREE.Vector3(1, 0, 0);
 
@@ -92,9 +96,12 @@ export function GalaxyHero({
   onUnsupported,
   scrollProgressRef,
   intro = false,
+  reducedMotion = false,
 }: GalaxyHeroProps) {
   const containerRef = useRef<HTMLDivElement>(null);
   const introRef = useRef(intro);
+  const reducedRef = useRef(reducedMotion);
+  reducedRef.current = reducedMotion;
   const labelRef = useRef<HTMLDivElement>(null);
   const buttonRefs = useRef<(HTMLButtonElement | null)[]>([]);
   const highlightRef = useRef<(index: number | null, tilt?: { x: number; y: number }, ring?: boolean) => void>(() => {});
@@ -292,7 +299,9 @@ export function GalaxyHero({
       focusPan.x = 0;
       focusPan.y = 0;
       galaxy.setFocus(index);
-      move = new FocusMove(from, FOCUS_DURATION, FOCUS_BULGE);
+      move = reducedRef.current
+        ? new FocusMove(from, REDUCED_FLIGHT_SECONDS, 0)
+        : new FocusMove(from, FOCUS_DURATION, FOCUS_BULGE);
       onHiResStateRef.current?.(index, "loading");
       const url = focusImagesRef.current[index];
       if (url) {
@@ -302,6 +311,9 @@ export function GalaxyHero({
 
     const onFrame = (dt: number) => {
       const group = galaxy.group;
+      const reduced = reducedRef.current;
+      galaxy.setReducedMotion(reduced);
+      const spin = reduced ? 0 : BASE_SPIN;
 
       // ── Commands from React ──
       const cmd = stateCommandRef.current;
@@ -324,14 +336,16 @@ export function GalaxyHero({
           focusPan.y = 0;
           // The disc turns to bring the picture just viewed to the front, as the camera leaves.
           if (focusPicture !== null) recenterRotY = galaxy.recenterRotation(focusPicture, group.rotation.y);
-          move = new FocusMove(currentPose(), EXIT_DURATION, EXIT_BULGE);
+          move = reducedRef.current
+            ? new FocusMove(currentPose(), REDUCED_FLIGHT_SECONDS, 0)
+            : new FocusMove(currentPose(), EXIT_DURATION, EXIT_BULGE);
           setState("FLYING_OUT");
         }
       }
 
       // ── Rotation: horizontal drags turn the disc, with momentum. Vertical movement stays with the page. ──
       if (state === "IDLE" && !isDragging) {
-        rotVelY = springLerp(rotVelY, BASE_SPIN, 1.2, dt);
+        rotVelY = springLerp(rotVelY, spin, 1.2, dt);
         group.rotation.y += rotVelY * dt;
       } else if (state === "FLYING_IN" || state === "FOCUSED") {
         group.rotation.y = springLerp(group.rotation.y, frozenRotY, 8, dt);
@@ -379,7 +393,7 @@ export function GalaxyHero({
           move = null;
           delete container.dataset.focusRect;
           setShift(0);
-          rotVelY = BASE_SPIN;
+          rotVelY = spin;
           setState("IDLE");
           onFlyOutCompleteRef.current?.();
         }

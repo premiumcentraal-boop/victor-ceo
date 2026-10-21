@@ -1,4 +1,4 @@
-import React, { useState, useCallback, useEffect, useMemo, useRef } from "react";
+import { useState, useCallback, useEffect, useMemo, useRef } from "react";
 import { GalaxyHero } from "../exhibition/GalaxyHero";
 import { FocusCaption } from "../exhibition/ui/FocusCaption";
 import { galleryPictures as galleryImages, pictureSrc } from "../exhibition/data/pictures";
@@ -43,6 +43,8 @@ export function TheExhibition() {
   const reducedMotion = useReducedMotion();
   // The first visit of a session opens with the camera pulling in. Reduced motion and repeat visits skip it.
   const [intro] = useState(() => !reducedMotion && shouldPlayIntro());
+  // The veil is taken out of the page once it has faded, so it costs nothing for the rest of the visit.
+  const [veiled, setVeiled] = useState(intro);
   useEffect(() => {
     if (intro) markIntroPlayed();
   }, [intro]);
@@ -203,15 +205,17 @@ export function TheExhibition() {
               onUnsupported={handleUnsupported}
               scrollProgressRef={scrollProgressRef}
               intro={intro}
+              reducedMotion={reducedMotion}
             />
           </div>
 
           {/* The first-visit opening: the galaxy comes out of black as the camera pulls in */}
-          {intro && (
+          {veiled && (
             <motion.div
               aria-hidden="true"
               initial={{ opacity: 1 }}
               animate={{ opacity: 0 }}
+              onAnimationComplete={() => setVeiled(false)}
               transition={{ duration: 2.4, delay: 0.2, ease: [0.22, 1, 0.36, 1] }}
               className="pointer-events-none absolute inset-0 z-[6] bg-[#010101]"
             />

@@ -129,6 +129,8 @@ export class GalaxyScene {
   private height = 1;
   private homeDistance = BASE_HOME_DISTANCE;
   private elapsed = 0;
+  /** When set, the twinkle and the nebula hold still. Read every frame, so it follows the visitor's setting. */
+  private motionReduced = false;
   private frameId = 0;
   private running = false;
   private onscreen = true;
@@ -256,6 +258,11 @@ export class GalaxyScene {
     this.hoveredIndex = index;
     this.hoverTilt = tilt;
     this.hoverRing = ring;
+  }
+
+  /** Holds the twinkle and the nebula still, for a visitor who asks for reduced motion. */
+  setReducedMotion(reduced: boolean): void {
+    this.motionReduced = reduced;
   }
 
   /** Marks the pieces this visitor has opened, so the galaxy remembers them. */
@@ -686,7 +693,7 @@ export class GalaxyScene {
     this.frameId = requestAnimationFrame(this.tick);
     const realSeconds = this.clock.getDelta();
     const dt = this.fixedStep ? 1 / 60 : Math.min(realSeconds, 0.05);
-    this.elapsed += dt;
+    if (!this.motionReduced) this.elapsed += dt;
 
     for (const layer of this.layers) {
       layer.material.uniforms.uTime.value = this.elapsed;
