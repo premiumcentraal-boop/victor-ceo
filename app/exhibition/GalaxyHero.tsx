@@ -7,13 +7,13 @@ import { EXIT_DURATION, FOCUS_DURATION, FocusMove, fitDistance, framedPose, type
 type FlyState = "IDLE" | "FLYING_IN" | "FOCUSED" | "FLYING_OUT";
 
 export interface GalaxyHeroProps {
-  /** The pictures at the size the disc shows. */
+  /** The pictures at the size the galaxy shows. */
   images: string[];
   /** The same pictures at the size a focused view needs. */
   focusImages: string[];
   /** The title of each picture, in the same order as `images`. */
   titles: string[];
-  /** The pieces this visitor has opened. The disc marks them. */
+  /** The pieces this visitor has opened. The galaxy marks them. */
   visited: ReadonlySet<number>;
   focusedIndex: number | null;
   onImageClick?: (imageIndex: number) => void;
@@ -39,9 +39,10 @@ export interface GalaxyHeroProps {
 
 const MIN_CAMERA_DISTANCE = 5;
 const MAX_CAMERA_DISTANCE = 25;
-const IMMERSED_DISTANCE = 6.2;
-/** Idle spin in radians per second, about 0.6° a second. */
-const BASE_SPIN = 0.0105;
+/** The camera's distance once the visitor has entered: just outside the ring of pictures. */
+const IMMERSED_DISTANCE = 11.5;
+/** Idle spin of the galaxy and its ring in radians per second, about 3° a second: a full turn in about two minutes. */
+const BASE_SPIN = 0.05;
 const DRAG_RADIANS_PER_PIXEL = 0.0035;
 const PINCH_ZOOM_SENSITIVITY = 1.15;
 /** Pinch zoom in the overview is kept within this range of the scroll position's distance. */
@@ -57,10 +58,13 @@ const EXIT_BULGE = 1.6;
 const SWIPE_CLOSE_PX = 110;
 const SWIPE_STEP_PX = 80;
 const RECENTER_RATE = 2.4;
+/** How far the camera leans towards the pointer, in world units, at the edge of the galaxy. */
+const PARALLAX_SIDE = 0.45;
+const PARALLAX_UP = 0.3;
 /** The opening pulls the camera in from this much further out, over INTRO_SECONDS. */
 const INTRO_PULL = 0.6;
 const INTRO_SECONDS = 3.2;
-/** With reduced motion, a flight is a short glide with no arc, and the disc does not turn on its own. */
+/** With reduced motion, a flight is a short glide with no arc, and the galaxy does not turn on its own. */
 const REDUCED_FLIGHT_SECONDS = 0.35;
 const UP = new THREE.Vector3(0, 1, 0);
 const RIGHT = new THREE.Vector3(1, 0, 0);
@@ -179,7 +183,11 @@ export function GalaxyHero({
     let introT = introRef.current ? 0 : 1;
     let shiftApplied = 0;
     const activePointers = new Map<number, { x: number; y: number }>();
-    const homeLook = new THREE.Vector3(0, 0, 0);
+    // The camera looks a little below the centre, so the galaxy sits above the controls at the foot of the page.
+    const homeLook = new THREE.Vector3(0, -0.6, 0);
+    // Where the pointer is over the galaxy, from -1 to 1 on each axis. The camera leans towards it.
+    const parallaxTarget = { x: 0, y: 0 };
+    const parallax = { x: 0, y: 0 };
 
     const setState = (next: FlyState) => {
       state = next;
@@ -334,7 +342,7 @@ export function GalaxyHero({
           focusZoom = 1;
           focusPan.x = 0;
           focusPan.y = 0;
-          // The disc turns to bring the picture just viewed to the front, as the camera leaves.
+          // The galaxy turns to bring the picture just viewed to the front, as the camera leaves.
           if (focusPicture !== null) recenterRotY = galaxy.recenterRotation(focusPicture, group.rotation.y);
           move = reducedRef.current
             ? new FocusMove(currentPose(), REDUCED_FLIGHT_SECONDS, 0)
@@ -343,7 +351,7 @@ export function GalaxyHero({
         }
       }
 
-      // ── Rotation: horizontal drags turn the disc, with momentum. Vertical movement stays with the page. ──
+      // ── Rotation: horizontal drags turn the galaxy, with momentum. Vertical movement stays with the page. ──
       if (state === "IDLE" && !isDragging) {
         rotVelY = springLerp(rotVelY, spin, 1.2, dt);
         group.rotation.y += rotVelY * dt;
@@ -360,7 +368,15 @@ export function GalaxyHero({
       const header = headerHeight();
       if (introT < 1) introT = Math.min(1, introT + dt / INTRO_SECONDS);
       if (state === "IDLE") {
-        applyPose(dollyPose());
+        const pose = dollyPose();
+        if (!reduced) {
+          parallax.x = springLerp(parallax.x, parallaxTarget.x, 2.5, dt);
+          parallax.y = springLerp(parallax.y, parallaxTarget.y, 2.5, dt);
+          pose.position
+            .addScaledVector(RIGHT.clone().applyQuaternion(pose.quaternion), parallax.x * PARALLAX_SIDE)
+            .addScaledVector(UP.clone().applyQuaternion(pose.quaternion), parallax.y * PARALLAX_UP);
+        }
+        applyPose(pose);
         setShift(0);
       } else if (state === "FLYING_IN" && move && focusPicture !== null) {
         const target = focusPose(focusPicture);
@@ -429,7 +445,7 @@ export function GalaxyHero({
     galaxy.setVisited(visitedRef.current);
 
     // ── Input ──
-    // In the overview, these handlers turn the disc sideways, pinch, pick and highlight.
+    // In the overview, these handlers turn the galaxy sideways, pinch, pick and highlight.
     // Once a picture is focused, they zoom and pan it, and a swipe down leaves.
     const el = galaxy.domElement;
     el.style.cursor = "grab";
@@ -554,6 +570,8 @@ export function GalaxyHero({
       if (e.pointerType === "mouse") {
         finishPointer(e, false);
         highlight(null);
+        parallaxTarget.x = 0;
+        parallaxTarget.y = 0;
       }
     };
 
@@ -570,11 +588,15 @@ export function GalaxyHero({
       if (state !== "IDLE") {
         el.style.cursor = state === "FOCUSED" ? "zoom-in" : "default";
         highlight(null);
+        parallaxTarget.x = 0;
+        parallaxTarget.y = 0;
         return;
       }
       if (isDragging) {
         el.style.cursor = "grabbing";
         highlight(null);
+        parallaxTarget.x = 0;
+        parallaxTarget.y = 0;
         return;
       }
       const index = galaxy.pick(e.clientX, e.clientY);
@@ -585,6 +607,8 @@ export function GalaxyHero({
         y: -((e.clientY - rect.top) / rect.height) * 2 + 1,
       };
       highlight(index, nextTilt, false);
+      parallaxTarget.x = nextTilt.x;
+      parallaxTarget.y = nextTilt.y;
     };
 
     // Esc leaves the focused view, and the arrow keys step between pieces.

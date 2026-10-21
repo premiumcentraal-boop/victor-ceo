@@ -53,7 +53,7 @@ export function framedPose(options: {
   };
 }
 
-/** The control point of the arc: the midpoint pushed outwards from the centre, so the path curves round the disc. */
+/** The control point of the arc: the midpoint pushed outwards from the centre, so the path curves round the galaxy. */
 export function arcControlPoint(start: THREE.Vector3, end: THREE.Vector3, outward: number): THREE.Vector3 {
   const mid = start.clone().add(end).multiplyScalar(0.5);
   const dir = mid.lengthSq() > 1e-6 ? mid.clone().normalize() : new THREE.Vector3(0, 1, 0);

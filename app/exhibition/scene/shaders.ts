@@ -8,10 +8,15 @@ export const pointVertex = /* glsl */ `
   uniform float uScale;
   uniform float uTime;
   uniform float uBrightness;
+  uniform float uSwirl;
   varying vec3 vColor;
 
   void main() {
-    vec4 mvPosition = modelViewMatrix * vec4(position, 1.0);
+    // The galaxy turns faster near its core than at its rim, as a real galaxy does.
+    float turn = uTime * uSwirl / (0.7 + length(position.xz));
+    vec3 p = position;
+    p.xz = mat2(cos(turn), -sin(turn), sin(turn), cos(turn)) * position.xz;
+    vec4 mvPosition = modelViewMatrix * vec4(p, 1.0);
     // Stars breathe at their own rate, so the disc never looks like a still image.
     float twinkle = 0.78 + 0.22 * sin(uTime * (0.5 + aSeed * 1.3) + aSeed * 40.0);
     gl_PointSize = clamp(aSize * uScale * uPixelRatio * (9.0 / -mvPosition.z), 1.0, 48.0);
@@ -43,13 +48,8 @@ export const fullscreenVertex = /* glsl */ `
   }
 `;
 
-/** Slow, deep nebula: domain-warped noise in the site's cyan and violet, fading to black at the edges. */
-export const nebulaFragment = /* glsl */ `
-  uniform float uTime;
-  uniform vec2 uResolution;
-  uniform float uIntensity;
-  varying vec2 vUv;
-
+/** Value noise and its fractal sum, shared by the nebula and the galaxy's haze. */
+const noiseGlsl = /* glsl */ `
   float hash(vec2 p) {
     p = fract(p * vec2(123.34, 456.21));
     p += dot(p, p + 45.32);
@@ -77,6 +77,16 @@ export const nebulaFragment = /* glsl */ `
     }
     return v;
   }
+`;
+
+/** Slow, deep nebula: domain-warped noise in the site's cyan and violet, fading to black at the edges. */
+export const nebulaFragment = /* glsl */ `
+  uniform float uTime;
+  uniform vec2 uResolution;
+  uniform float uIntensity;
+  varying vec2 vUv;
+
+  ${noiseGlsl}
 
   void main() {
     vec2 uv = (vUv - 0.5) * vec2(uResolution.x / uResolution.y, 1.0);
@@ -91,6 +101,48 @@ export const nebulaFragment = /* glsl */ `
 
     float edge = smoothstep(1.15, 0.25, length(uv));
     vec3 col = deep + cloud * edge * uIntensity;
+    gl_FragColor = vec4(col, 1.0);
+  }
+`;
+
+/** A flat plane in the galaxy's own plane, carrying the spiral arms as a glow the stars sit in. */
+export const hazeVertex = /* glsl */ `
+  varying vec2 vUv;
+
+  void main() {
+    vUv = uv;
+    gl_Position = projectionMatrix * modelViewMatrix * vec4(position, 1.0);
+  }
+`;
+
+export const hazeFragment = /* glsl */ `
+  uniform float uTime;
+  uniform float uSwirl;
+  uniform float uOuter;
+  uniform float uInner;
+  uniform float uArms;
+  uniform float uWinding;
+  uniform float uIntensity;
+  varying vec2 vUv;
+
+  ${noiseGlsl}
+
+  void main() {
+    // The plane lies flat in the galaxy: its x is the world x, and its y runs to minus the world z.
+    vec2 w = vec2((vUv.x - 0.5) * 2.0 * uOuter, -(vUv.y - 0.5) * 2.0 * uOuter);
+    float r = length(w);
+    float theta = atan(w.y, w.x);
+    // The same turn as the stars, so the glow and the stars move as one galaxy.
+    float turn = uTime * uSwirl / (0.7 + r);
+    float phase = uArms * (theta + turn - uWinding * log(max(r, uInner) / uInner));
+    // Sharp arms over a faint disc, so the spiral reads as arms, not as a ring.
+    float arms = pow(0.5 + 0.5 * cos(phase), 6.0);
+    float dust = 0.55 + 0.9 * fbm(w * 0.9);
+    float bulge = exp(-r * r / 0.9);
+    float edge = 1.0 - smoothstep(uOuter * 0.45, uOuter, r);
+    vec3 armColor = mix(vec3(0.12, 0.42, 1.0), vec3(0.6, 0.25, 1.0), smoothstep(0.9, 3.2, r));
+    vec3 coreColor = vec3(1.0, 0.8, 0.55);
+    vec3 col = mix(armColor, coreColor, bulge) * (arms * dust * 1.3 + 0.12 * dust + bulge * 0.6) * edge * uIntensity;
     gl_FragColor = vec4(col, 1.0);
   }
 `;

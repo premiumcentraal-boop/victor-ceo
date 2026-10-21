@@ -1,6 +1,6 @@
 import * as THREE from "three";
-import { DISC_LAYERS, discLayerPoints, homeDirection, placePictures, type DiscLayer } from "./layout";
-import { fullscreenVertex, nebulaFragment, pointFragment, pointVertex } from "./shaders";
+import { GALAXY, GALAXY_LAYERS, STARFIELD, galaxyLayerPoints, homeDirection, placePictures, starfieldPoints, type GalaxyLayer } from "./layout";
+import { fullscreenVertex, hazeFragment, hazeVertex, nebulaFragment, pointFragment, pointVertex } from "./shaders";
 
 /** How much detail the scene draws. Steps down when a device cannot hold its frame rate. */
 export type QualityTier = "high" | "medium" | "low";
@@ -16,9 +16,13 @@ const TIER_ORDER: QualityTier[] = ["high", "medium", "low"];
 const SLOW_FRAME_MS = 26;
 
 const FOV_LANDSCAPE = 40;
-/** On a portrait screen the disc is framed by its width, so this is the half-width kept in view. */
-const PHONE_HALF_WIDTH = 3.4;
-const BASE_HOME_DISTANCE = 12.5;
+/** On a portrait screen the ring of pictures is framed by its width, so this is the half-width kept in view. */
+const PHONE_HALF_WIDTH = 4.4;
+const BASE_HOME_DISTANCE = 13;
+/** How fast the galaxy turns. The core turns faster than the rim. */
+const SWIRL = 0.55;
+/** The glow of the spiral arms, flat in the galaxy's plane. It stays inside the ring of pictures. */
+const HAZE_RADIUS = GALAXY.outerRadius * 1.1;
 const MAX_HOME_DISTANCE = 22;
 
 export const PICTURE_WIDTH = 1.35;
@@ -34,13 +38,13 @@ const AMBER = new THREE.Color(0xffd6aa);
 
 export interface ScenePicture {
   index: number;
-  /** Positions the picture on the disc and carries its lift. Its facing is set by `lookAt`. */
+  /** Positions the picture on the ring and carries its lift. Its facing is set by `lookAt`. */
   anchor: THREE.Group;
   mesh: THREE.Mesh;
   halo: THREE.Mesh;
   /** Width divided by height. Stays at 1 : √2 until the picture's own texture has loaded. */
   aspect: number;
-  /** Where the picture rests on the disc, and the direction it faces. */
+  /** Where the picture rests on the ring, and the direction it faces. */
   base: THREE.Vector3;
   normal: THREE.Vector3;
   /** 0 at rest, 1 when hovered or focused. Eased every frame. */
@@ -97,13 +101,13 @@ function initialTier(): QualityTier {
 }
 
 /**
- * The galaxy: one WebGL context, one render loop and no input handling. The caller turns the disc,
+ * The galaxy: one WebGL context, one render loop and no input handling. The caller turns the galaxy,
  * moves the camera, decides what a click means, and says which picture is highlighted. This class
  * draws what it is told to draw.
  */
 export class GalaxyScene {
   readonly camera: THREE.PerspectiveCamera;
-  /** The disc and its pictures. The caller turns it. */
+  /** The galaxy and its pictures. The caller turns it. */
   readonly group = new THREE.Group();
   readonly pictures: ScenePicture[] = [];
   readonly domElement: HTMLCanvasElement;
@@ -119,7 +123,9 @@ export class GalaxyScene {
   private readonly textures: THREE.Texture[] = [];
   /** Each picture sharpens once. A second visit reuses the sharp texture, instead of adding another. */
   private readonly focusLoads = new Map<number, Promise<void>>();
-  private readonly layers: { points: THREE.Points; material: THREE.ShaderMaterial; count: number; spin: number }[] = [];
+  private readonly layers: { points: THREE.Points; material: THREE.ShaderMaterial; count: number }[] = [];
+  private haze: THREE.Mesh<THREE.PlaneGeometry, THREE.ShaderMaterial> | null = null;
+  private coreGlow: THREE.Sprite | null = null;
   private readonly nebula: NebulaPass;
   private readonly fixedStep: boolean;
   private readonly forcedTier: boolean;
@@ -166,7 +172,8 @@ export class GalaxyScene {
     this.scene.add(this.group);
     this.haloTexture = makeHaloTexture();
 
-    this.buildDisc();
+    this.buildGalaxy();
+    this.buildStarfield();
     this.buildPictures(images);
     this.nebula = this.buildNebula();
 
@@ -179,7 +186,7 @@ export class GalaxyScene {
     return this.lensFov;
   }
 
-  /** Distance from the centre at which the disc is framed on this screen. */
+  /** Distance from the centre at which the galaxy and its ring are framed on this screen. */
   get framingDistance(): number {
     return this.homeDistance;
   }
@@ -211,7 +218,7 @@ export class GalaxyScene {
 
   /**
    * Marks one picture as the one in focus. It stays lit, and the others dim, so the eye goes to it.
-   * Pass null to bring the whole disc back.
+   * Pass null to bring the whole galaxy back.
    */
   setFocus(index: number | null): void {
     this.focusedIndex = index;
@@ -310,8 +317,8 @@ export class GalaxyScene {
   }
 
   /**
-   * The disc's rotation that turns this picture to face the visitor's home view, choosing the
-   * equivalent turn nearest to `current`, so the disc never spins the long way round.
+   * The galaxy's rotation that turns this picture to face the visitor's home view, choosing the
+   * equivalent turn nearest to `current`, so the galaxy never spins the long way round.
    */
   recenterRotation(index: number, current: number): number {
     const picture = this.pictures[index];
@@ -384,6 +391,14 @@ export class GalaxyScene {
     }
     this.textures.forEach((t) => t.dispose());
     this.haloTexture.dispose();
+    if (this.haze) {
+      this.haze.geometry.dispose();
+      this.haze.material.dispose();
+    }
+    if (this.coreGlow) {
+      this.coreGlow.material.map?.dispose();
+      this.coreGlow.material.dispose();
+    }
     this.nebula.target.dispose();
 
     this.renderer.dispose();
@@ -401,15 +416,13 @@ export class GalaxyScene {
 
   // ── Construction ─────────────────────────────────────────────────────────
 
-  private buildDisc(): void {
-    const layerOrder: DiscLayer[] = ["dust", "stars", "core"];
-    const brightness: Record<DiscLayer, number> = { dust: 0.55, stars: 1.1, core: 1.35 };
-    const scale: Record<DiscLayer, number> = { dust: 2.2, stars: 2.8, core: 3.4 };
-    // The dust turns slowly against the disc. The difference reads as depth.
-    const spin: Record<DiscLayer, number> = { dust: -0.035, stars: 0, core: 0 };
+  private buildGalaxy(): void {
+    const layerOrder: GalaxyLayer[] = ["dust", "stars", "core"];
+    const brightness: Record<GalaxyLayer, number> = { dust: 0.9, stars: 1.5, core: 1.6 };
+    const scale: Record<GalaxyLayer, number> = { dust: 2.2, stars: 2.8, core: 3.4 };
 
     for (const name of layerOrder) {
-      const data = discLayerPoints(name);
+      const data = galaxyLayerPoints(name);
       const geometry = new THREE.BufferGeometry();
       geometry.setAttribute("position", new THREE.BufferAttribute(data.positions, 3));
       geometry.setAttribute("aColor", new THREE.BufferAttribute(data.colors, 3));
@@ -423,6 +436,7 @@ export class GalaxyScene {
           uScale: { value: scale[name] },
           uTime: { value: 0 },
           uBrightness: { value: brightness[name] },
+          uSwirl: { value: SWIRL },
         },
         transparent: true,
         depthWrite: false,
@@ -430,13 +444,86 @@ export class GalaxyScene {
       });
       const points = new THREE.Points(geometry, material);
       this.group.add(points);
-      this.layers.push({ points, material, count: DISC_LAYERS[name].count, spin: spin[name] });
+      this.layers.push({ points, material, count: GALAXY_LAYERS[name].count });
     }
+
+    this.buildHaze();
+    this.buildCoreGlow();
+  }
+
+  /** The spiral arms as a glow, flat in the galaxy's plane, turning with the stars. */
+  private buildHaze(): void {
+    const material = new THREE.ShaderMaterial({
+      vertexShader: hazeVertex,
+      fragmentShader: hazeFragment,
+      uniforms: {
+        uTime: { value: 0 },
+        uSwirl: { value: SWIRL },
+        uOuter: { value: HAZE_RADIUS },
+        uInner: { value: GALAXY.innerRadius },
+        uArms: { value: GALAXY.arms },
+        uWinding: { value: GALAXY.winding },
+        uIntensity: { value: 0.9 },
+      },
+      transparent: true,
+      depthWrite: false,
+      blending: THREE.AdditiveBlending,
+    });
+    this.haze = new THREE.Mesh(new THREE.PlaneGeometry(HAZE_RADIUS * 2, HAZE_RADIUS * 2), material);
+    this.haze.rotation.x = -Math.PI / 2;
+    this.group.add(this.haze);
+  }
+
+  /** A soft, bright core, so the centre of the galaxy burns. */
+  private buildCoreGlow(): void {
+    const canvas = document.createElement("canvas");
+    canvas.width = 128;
+    canvas.height = 128;
+    const context = canvas.getContext("2d");
+    if (context) {
+      const gradient = context.createRadialGradient(64, 64, 0, 64, 64, 64);
+      gradient.addColorStop(0, "rgba(255, 255, 255, 1)");
+      gradient.addColorStop(0.22, "rgba(255, 220, 170, 0.6)");
+      gradient.addColorStop(1, "rgba(255, 200, 140, 0)");
+      context.fillStyle = gradient;
+      context.fillRect(0, 0, 128, 128);
+    }
+    const map = new THREE.CanvasTexture(canvas);
+    const material = new THREE.SpriteMaterial({ map, blending: THREE.AdditiveBlending, transparent: true, depthWrite: false });
+    this.coreGlow = new THREE.Sprite(material);
+    this.coreGlow.scale.set(2.8, 2.8, 1);
+    this.group.add(this.coreGlow);
+  }
+
+  /** A far starfield on a shell round the scene. It does not turn with the galaxy, so it reads as depth. */
+  private buildStarfield(): void {
+    const data = starfieldPoints();
+    const geometry = new THREE.BufferGeometry();
+    geometry.setAttribute("position", new THREE.BufferAttribute(data.positions, 3));
+    geometry.setAttribute("aColor", new THREE.BufferAttribute(data.colors, 3));
+    geometry.setAttribute("aSize", new THREE.BufferAttribute(data.sizes, 1));
+    geometry.setAttribute("aSeed", new THREE.BufferAttribute(data.seeds, 1));
+    const material = new THREE.ShaderMaterial({
+      vertexShader: pointVertex,
+      fragmentShader: pointFragment,
+      uniforms: {
+        uPixelRatio: { value: this.renderer.getPixelRatio() },
+        uScale: { value: 2.6 },
+        uTime: { value: 0 },
+        uBrightness: { value: 1.0 },
+        uSwirl: { value: 0 },
+      },
+      transparent: true,
+      depthWrite: false,
+      blending: THREE.AdditiveBlending,
+    });
+    const points = new THREE.Points(geometry, material);
+    this.scene.add(points);
+    this.layers.push({ points, material, count: STARFIELD.count });
   }
 
   private buildPictures(images: string[]): void {
-    const [fx, fy, fz] = homeDirection();
-    const placements = placePictures(images.length, [fx, fy, fz]);
+    const placements = placePictures(images.length);
     images.forEach((url, index) => {
       const placement = placements[index];
       const [px, py, pz] = placement.position;
@@ -525,7 +612,7 @@ export class GalaxyScene {
     const uniforms = {
       uTime: { value: 0 },
       uResolution: { value: new THREE.Vector2(1, 1) },
-      uIntensity: { value: 1.7 },
+      uIntensity: { value: 2.0 },
     };
     const camera = new THREE.OrthographicCamera(-1, 1, 1, -1, 0, 1);
 
@@ -697,9 +784,10 @@ export class GalaxyScene {
 
     for (const layer of this.layers) {
       layer.material.uniforms.uTime.value = this.elapsed;
-      layer.points.rotation.y += layer.spin * dt;
     }
     this.nebula.uniforms.uTime.value = this.elapsed;
+    if (this.haze) this.haze.material.uniforms.uTime.value = this.elapsed;
+    if (this.coreGlow) this.coreGlow.material.opacity = 0.8 + 0.12 * Math.sin(this.elapsed * 0.7);
 
     this.options.onFrame?.(dt, this.elapsed);
     this.updateHover(dt);
