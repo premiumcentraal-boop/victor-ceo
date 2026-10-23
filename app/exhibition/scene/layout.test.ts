@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { GALAXY, GALAXY_LAYERS, ORBIT, STARFIELD, galaxyLayerPoints, homeDirection, placePictures, pictureTabOrder, seededRandom, starfieldPoints } from "./layout";
+import { DEEP_FIELD, DRIFT, FLOW, GALAXY, GALAXY_LAYERS, ORBIT, STARFIELD, deepFieldPoints, driftPoints, flowPoints, galaxyLayerPoints, homeDirection, placePictures, pictureTabOrder, seededRandom, starfieldPoints } from "./layout";
 
 const TAU = Math.PI * 2;
 
@@ -130,5 +130,53 @@ describe("starfieldPoints", () => {
 
   it("is the same every time, so the sky does not change between visits", () => {
     expect(starfieldPoints().positions).toEqual(starfieldPoints().positions);
+  });
+});
+
+describe("deepFieldPoints", () => {
+  it("has one entry per star, on a shell beyond the far starfield", () => {
+    const { positions, sizes, seeds } = deepFieldPoints();
+    expect(positions).toHaveLength(DEEP_FIELD.count * 3);
+    expect(sizes).toHaveLength(DEEP_FIELD.count);
+    expect(seeds).toHaveLength(DEEP_FIELD.count);
+    expect(DEEP_FIELD.inner).toBeGreaterThan(STARFIELD.outer);
+    for (let i = 0; i < positions.length; i += 3) {
+      const distance = Math.hypot(positions[i], positions[i + 1], positions[i + 2]);
+      expect(distance).toBeGreaterThanOrEqual(DEEP_FIELD.inner - 1e-3);
+      expect(distance).toBeLessThanOrEqual(DEEP_FIELD.outer + 1e-3);
+    }
+  });
+});
+
+describe("driftPoints", () => {
+  it("floats in a band round the galaxy, outside its disc and within the band's height", () => {
+    const { positions } = driftPoints();
+    expect(positions).toHaveLength(DRIFT.count * 3);
+    for (let i = 0; i < positions.length; i += 3) {
+      const reach = Math.hypot(positions[i], positions[i + 2]);
+      expect(reach).toBeGreaterThanOrEqual(DRIFT.inner - 1e-3);
+      expect(reach).toBeLessThanOrEqual(DRIFT.outer + 1e-3);
+      expect(Math.abs(positions[i + 1])).toBeLessThanOrEqual(DRIFT.height + 1e-3);
+    }
+  });
+
+  it("is the same every time", () => {
+    expect(driftPoints().positions).toEqual(driftPoints().positions);
+  });
+});
+
+describe("flowPoints", () => {
+  it("has one lane per star, within the reach of the view, and a seed that sets where each star starts", () => {
+    const { positions, seeds } = flowPoints();
+    expect(positions).toHaveLength(FLOW.count * 3);
+    expect(seeds).toHaveLength(FLOW.count);
+    for (let i = 0; i < positions.length; i += 3) {
+      expect(Math.abs(positions[i])).toBeLessThanOrEqual(FLOW.reach);
+      expect(Math.abs(positions[i + 1])).toBeLessThanOrEqual(FLOW.reach);
+    }
+    for (const seed of seeds) {
+      expect(seed).toBeGreaterThanOrEqual(0);
+      expect(seed).toBeLessThan(1);
+    }
   });
 });

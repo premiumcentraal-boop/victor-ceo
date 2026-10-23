@@ -3,6 +3,7 @@ import { createPortal } from "react-dom";
 import { motion, AnimatePresence } from "motion/react";
 import { X, Maximize, Minimize, ZoomIn, ZoomOut, RotateCcw } from "lucide-react";
 import { pictureSrc } from "../exhibition/data/pictures";
+import { GestureHint } from "../exhibition/ui/GestureHint";
 
 interface ImageViewerProps {
   src: string;
@@ -127,7 +128,6 @@ export function ImageViewer({ src, index, onClose, title }: ImageViewerProps) {
   const entranceDelay = 0.15;
   const imageDelay = 0.1;
   const imageDuration = 0.5;
-  const hintDelay = 0.6;
 
   return createPortal(
     <AnimatePresence>
@@ -227,17 +227,8 @@ export function ImageViewer({ src, index, onClose, title }: ImageViewerProps) {
           />
         </motion.div>
 
-        {/* ── Bottom hint ── */}
-        <motion.div
-          initial={{ opacity: 0 }}
-          animate={{ opacity: 1 }}
-          transition={{ delay: hintDelay, duration: 0.5 }}
-          className="py-3 text-center bg-white/[0.02]"
-        >
-          <span className="text-xs font-mono text-white/60 tracking-widest uppercase">
-            Scroll to zoom · Double-click to toggle · Drag to pan
-          </span>
-        </motion.div>
+        {/* On the first piece of a session, the three gestures are shown once, without words. */}
+        <GestureHint />
       </motion.div>
     </AnimatePresence>,
     document.body

@@ -53,12 +53,6 @@ export const FocusCaption = forwardRef<HTMLHeadingElement, FocusCaptionProps>(fu
           >
             {title}
           </h2>
-          <span className="mt-0.5 hidden text-xs font-mono tracking-widest text-white/70 uppercase sm:block">
-            Scroll or pinch to zoom · Drag to pan · Esc to close
-          </span>
-          <span className="mt-0.5 text-xs font-mono tracking-widest text-white/70 uppercase sm:hidden">
-            Pinch to zoom · Swipe down to close
-          </span>
         </div>
 
         <button

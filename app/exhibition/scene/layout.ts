@@ -143,10 +143,37 @@ export const STARFIELD = {
   outer: 70,
 } as const;
 
-/** Stars on a shell well beyond the galaxy, in uniform directions, so they read as a deep background. */
-export function starfieldPoints(seed = 53): LayerPoints {
+/** A deeper shell, further out than the far starfield, so the sky keeps going past where the eye can follow. */
+export const DEEP_FIELD = {
+  count: 1800,
+  inner: 90,
+  outer: 160,
+} as const;
+
+/** Stars that float in the space round the galaxy, between the ring of pictures and the far sky. */
+export const DRIFT = {
+  count: 1100,
+  inner: 6,
+  outer: 24,
+  height: 7,
+} as const;
+
+/**
+ * Stars that stream past the visitor as the page scrolls. Their lanes are fixed in the view. `reach` is how far
+ * a lane sits either side of the view's centre, `near` is the closest a star comes, and `depth` is how far
+ * the stars run from far to near before they wrap.
+ */
+export const FLOW = {
+  count: 1600,
+  reach: 8,
+  near: 0.6,
+  depth: 30,
+} as const;
+
+/** Stars on a shell, in uniform directions, so they read as a background with no edge or pattern. */
+function shellPoints(shell: { count: number; inner: number; outer: number }, seed: number): LayerPoints {
   const random = seededRandom(seed);
-  const count = STARFIELD.count;
+  const count = shell.count;
   const positions = new Float32Array(count * 3);
   const colors = new Float32Array(count * 3);
   const sizes = new Float32Array(count);
@@ -156,7 +183,7 @@ export function starfieldPoints(seed = 53): LayerPoints {
     const z = random() * 2 - 1;
     const azimuth = random() * TAU;
     const across = Math.sqrt(1 - z * z);
-    const radius = STARFIELD.inner + (STARFIELD.outer - STARFIELD.inner) * random();
+    const radius = shell.inner + (shell.outer - shell.inner) * random();
     positions[i * 3] = radius * across * Math.cos(azimuth);
     positions[i * 3 + 1] = radius * z;
     positions[i * 3 + 2] = radius * across * Math.sin(azimuth);
@@ -169,6 +196,76 @@ export function starfieldPoints(seed = 53): LayerPoints {
     colors[i * 3 + 2] = base[2] + jitter;
 
     sizes[i] = 0.7 + 1.3 * Math.pow(random(), 3);
+    seeds[i] = random();
+  }
+
+  return { positions, colors, sizes, seeds };
+}
+
+/** The far starfield, on its shell round the scene. */
+export function starfieldPoints(seed = 53): LayerPoints {
+  return shellPoints(STARFIELD, seed);
+}
+
+/** The deep field, on a shell further out again. */
+export function deepFieldPoints(seed = 61): LayerPoints {
+  return shellPoints(DEEP_FIELD, seed);
+}
+
+/**
+ * Stars that float in a band round the galaxy, between the pictures and the far sky. They sit in the band
+ * unevenly, so some are near the ring of pictures and some are out beyond it, which gives the sky depth.
+ */
+export function driftPoints(seed = 71): LayerPoints {
+  const random = seededRandom(seed);
+  const count = DRIFT.count;
+  const positions = new Float32Array(count * 3);
+  const colors = new Float32Array(count * 3);
+  const sizes = new Float32Array(count);
+  const seeds = new Float32Array(count);
+
+  for (let i = 0; i < count; i++) {
+    const azimuth = random() * TAU;
+    // Uniform over the band's area, so the stars do not bunch towards its inner edge.
+    const radius = Math.sqrt(DRIFT.inner * DRIFT.inner + (DRIFT.outer * DRIFT.outer - DRIFT.inner * DRIFT.inner) * random());
+    positions[i * 3] = radius * Math.cos(azimuth);
+    positions[i * 3 + 1] = (random() * 2 - 1) * DRIFT.height;
+    positions[i * 3 + 2] = radius * Math.sin(azimuth);
+
+    const base = random() < 0.2 ? WARM : COOL;
+    const jitter = (random() - 0.5) * 0.1;
+    colors[i * 3] = base[0] + jitter;
+    colors[i * 3 + 1] = base[1] + jitter;
+    colors[i * 3 + 2] = base[2] + jitter;
+
+    sizes[i] = 0.8 + 1.4 * Math.pow(random(), 3);
+    seeds[i] = random();
+  }
+
+  return { positions, colors, sizes, seeds };
+}
+
+/** The scroll flow's stars: each one has a fixed lane in the view, and its seed sets where it starts along the run. */
+export function flowPoints(seed = 89): LayerPoints {
+  const random = seededRandom(seed);
+  const count = FLOW.count;
+  const positions = new Float32Array(count * 3);
+  const colors = new Float32Array(count * 3);
+  const sizes = new Float32Array(count);
+  const seeds = new Float32Array(count);
+
+  for (let i = 0; i < count; i++) {
+    positions[i * 3] = (random() * 2 - 1) * FLOW.reach;
+    positions[i * 3 + 1] = (random() * 2 - 1) * FLOW.reach;
+    positions[i * 3 + 2] = 0;
+
+    const base = random() < 0.15 ? WARM : COOL;
+    const jitter = (random() - 0.5) * 0.1;
+    colors[i * 3] = base[0] + jitter;
+    colors[i * 3 + 1] = base[1] + jitter;
+    colors[i * 3 + 2] = base[2] + jitter;
+
+    sizes[i] = 0.8 + 1.2 * Math.pow(random(), 3);
     seeds[i] = random();
   }
 

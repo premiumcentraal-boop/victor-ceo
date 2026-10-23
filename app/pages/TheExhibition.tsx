@@ -1,6 +1,7 @@
 import { useState, useCallback, useEffect, useMemo, useRef } from "react";
 import { GalaxyHero } from "../exhibition/GalaxyHero";
 import { FocusCaption } from "../exhibition/ui/FocusCaption";
+import { GestureHint } from "../exhibition/ui/GestureHint";
 import { galleryPictures as galleryImages, pictureSrc } from "../exhibition/data/pictures";
 import { loadVisited, saveVisited } from "../exhibition/state/visited";
 import { markIntroPlayed, shouldPlayIntro } from "../exhibition/state/intro";
@@ -25,7 +26,6 @@ export function TheExhibition() {
   const [hiResLoading, setHiResLoading] = useState(false);
   const [flatMode, setFlatMode] = useState(false);
   const [visited, setVisited] = useState<Set<number>>(() => loadVisited());
-  const [immersed, setImmersed] = useState(false);
   const captionTitleRef = useRef<HTMLHeadingElement>(null);
   // The latest focused piece, for handlers that run from the galaxy's own frame loop.
   const focusedRef = useRef<number | null>(null);
@@ -50,31 +50,13 @@ export function TheExhibition() {
   }, [intro]);
   // Read by the galaxy's render loop every frame. A ref, so scrolling never re-renders React.
   const scrollProgressRef = useRef(0);
-  const immersedRef = useRef(false);
   const { scrollYProgress } = useScroll({ target: sceneRef, offset: ["start start", "end end"] });
   useMotionValueEvent(scrollYProgress, "change", (value) => {
     scrollProgressRef.current = value;
-    // React only hears about the switch between the two states, not every scroll frame.
-    const next = value > 0.9;
-    if (next !== immersedRef.current) {
-      immersedRef.current = next;
-      setImmersed(next);
-    }
   });
   const headlineOpacity = useTransform(scrollYProgress, [0, 0.45], [1, 0]);
   const headlineY = useTransform(scrollYProgress, [0, 0.45], [0, -48]);
   const cueOpacity = useTransform(scrollYProgress, [0, 0.12], [1, 0]);
-
-  // Tap in / tap out: scroll the page to the end or the top of the scene.
-  const toggleGalaxy = useCallback(() => {
-    const scene = sceneRef.current;
-    const stage = scene?.firstElementChild as HTMLElement | null | undefined;
-    if (!scene || !stage) return;
-    const sceneTop = scene.getBoundingClientRect().top + window.scrollY;
-    const travel = scene.offsetHeight - stage.offsetHeight;
-    const target = immersedRef.current ? sceneTop : sceneTop + travel;
-    window.scrollTo({ top: Math.max(0, target), behavior: reducedMotion ? "auto" : "smooth" });
-  }, [reducedMotion]);
 
   // Brings the galaxy into view before a flight, unless it already is. Resolves when the scroll settles.
   const scrollToGalaxy = useCallback((): Promise<void> => {
@@ -221,20 +203,8 @@ export function TheExhibition() {
             />
           )}
 
-          {/* The bottom dock: the one control for entering the galaxy, with the scroll cue beneath it */}
+          {/* The bottom dock: the scroll cue. Scrolling is how the visitor moves through the galaxy. */}
           <div className="absolute inset-x-0 bottom-[4%] z-30 flex flex-col items-center gap-5 pointer-events-none">
-            <motion.button
-              type="button"
-              onClick={toggleGalaxy}
-              initial={{ opacity: 0 }}
-              animate={{ opacity: focusedIndex !== null ? 0 : 1 }}
-              transition={{ delay: focusedIndex !== null ? 0 : 2.2, duration: 0.8 }}
-              style={{ pointerEvents: focusedIndex !== null ? "none" : "auto" }}
-              className="px-5 py-2.5 rounded-full border border-white/20 bg-white/[0.04] backdrop-blur-md text-xs font-mono text-white/80 hover:text-white hover:border-white/40 hover:bg-white/10 transition-colors tracking-widest uppercase"
-            >
-              {immersed ? "Back to overview" : "Enter the galaxy"}
-            </motion.button>
-
             <motion.div style={{ opacity: cueOpacity }}>
               <motion.div
                 initial={{ opacity: 0 }}
@@ -270,6 +240,9 @@ export function TheExhibition() {
               />
             )}
           </AnimatePresence>
+
+          {/* On the first piece of a session, the three gestures are shown once, without words. */}
+          {focusedIndex !== null && arrived && !flatMode && <GestureHint />}
         </div>
       </section>
 
