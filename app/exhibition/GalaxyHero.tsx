@@ -6,6 +6,7 @@ import { EXIT_DURATION, FOCUS_DURATION, FocusMove, fitDistance, framedPose, type
 import { restShift, type OpenArea } from "./camera/framing";
 import { coreTravel } from "./camera/zoom";
 import { glideStep } from "./input/glide";
+import { decideTwoFingerGesture, type TwoFingerGesture } from "./input/gesture";
 
 type FlyState = "IDLE" | "FLYING_IN" | "FOCUSED" | "FLYING_OUT";
 
@@ -34,6 +35,8 @@ export interface GalaxyHeroProps {
   onUnsupported?: () => void;
   /** Page scroll progress, 0 (the overview) to 1 (the far end of the scene). The page owns the scroll; the galaxy only reads it. */
   scrollProgressRef?: MutableRefObject<number>;
+  /** How far the camera has passed through the core as the gallery rises, 0 to 1. The galaxy only reads it. */
+  revealRef?: MutableRefObject<number>;
   /** Opens the overview from further out, pulling in over a few seconds. Read once, when the galaxy mounts. */
   intro?: boolean;
   /** The visitor asked for reduced motion: no idle turn, no arcing flights, a still nebula. */
@@ -42,10 +45,12 @@ export interface GalaxyHeroProps {
   openArea?: OpenArea | null;
 }
 
-const MIN_CAMERA_DISTANCE = 3.5;
+const MIN_CAMERA_DISTANCE = 1.2;
 const MAX_CAMERA_DISTANCE = 25;
 /** The camera's distance at the core, at the far end of the scroll. It flies above the disc, down to the centre. */
 const CORE_DISTANCE = 4.2;
+/** The distance the camera passes through the core to, as the gallery rises. It flies through the light. */
+const THROUGH_DISTANCE = 1.6;
 /** The point the camera looks at: the middle of the overview, sliding to the core as the camera arrives. */
 const CORE_LOOK = new THREE.Vector3(0, 0, 0);
 /** How far the stars that rush past the visitor travel over the whole scroll, in world units. */
@@ -68,7 +73,7 @@ const SCROLL_REST = 8;
 const SCROLL_MAX = 6000;
 const PINCH_ZOOM_SENSITIVITY = 1.15;
 /** Pinch zoom in the overview is kept within this range of the scroll position's distance. */
-const MIN_ZOOM = 0.75;
+const MIN_ZOOM = 0.45;
 const MAX_ZOOM = 1.45;
 /** Zoom inside a focused picture: from the framed view to three times closer. */
 const MAX_FOCUS_ZOOM = 3;
@@ -121,6 +126,7 @@ export function GalaxyHero({
   onHiResState,
   onUnsupported,
   scrollProgressRef,
+  revealRef,
   intro = false,
   reducedMotion = false,
   openArea = null,
@@ -223,6 +229,9 @@ export function GalaxyHero({
     let fingersY = 0;
     let fingersVelocity = 0;
     let fingersTime = 0;
+    // What the two fingers are doing, decided once per touch: a pinch zooms, or a pan scrolls, never both.
+    let twoFingerGesture: TwoFingerGesture = "undecided";
+    let twoFingerStart = { x: 0, y: 0 };
     const activePointers = new Map<number, { x: number; y: number }>();
     // The camera looks a little below the centre, so the galaxy sits above the controls at the foot of the page.
     const homeLook = new THREE.Vector3(0, -0.6, 0);
@@ -286,8 +295,10 @@ export function GalaxyHero({
       const progress = scrollProgressRef?.current ?? 0;
       const travel = coreTravel(progress);
       const pull = 1 + INTRO_PULL * (1 - easeOutCubic(introT));
+      const reveal = revealRef?.current ?? 0;
+      const towardCore = THREE.MathUtils.lerp(galaxy.framingDistance * zoom * pull, CORE_DISTANCE, travel);
       const distance = THREE.MathUtils.clamp(
-        THREE.MathUtils.lerp(galaxy.framingDistance * zoom * pull, CORE_DISTANCE, travel),
+        THREE.MathUtils.lerp(towardCore, THROUGH_DISTANCE, reveal),
         MIN_CAMERA_DISTANCE,
         MAX_CAMERA_DISTANCE
       );
@@ -484,11 +495,16 @@ export function GalaxyHero({
 
       // ── The sky: the scroll carries the visitor through the stars. They are hidden while a picture is in focus. ──
       const progress = scrollProgressRef?.current ?? 0;
-      flowPhase = springLerp(flowPhase, progress, 2.2, dt);
+      const reveal = revealRef?.current ?? 0;
+      // The stars keep streaming through the reveal, so the passage through the core carries the visitor on.
+      flowPhase = springLerp(flowPhase, progress + reveal, 2.2, dt);
       const flowWanted = !reduced && state === "IDLE" ? THREE.MathUtils.smoothstep(progress, 0, FLOW_START) : 0;
       flowStrength = springLerp(flowStrength, flowWanted, 4, dt);
       galaxy.setFlow(flowPhase * FLOW_TRAVEL, flowStrength);
-      galaxy.setCoreTravel(coreTravel(progress));
+      // The core softens as the camera nears it, whether by the scroll's dive or by a pinch in close.
+      const closeness = THREE.MathUtils.clamp((1 - zoom) / 0.55, 0, 1);
+      galaxy.setCoreTravel(Math.max(coreTravel(progress), 0.8 * closeness));
+      galaxy.setReveal(reveal);
 
       // ── Visited marks ──
       galaxy.setVisited(visitedRef.current);
@@ -531,10 +547,10 @@ export function GalaxyHero({
       return a && b ? Math.hypot(a.x - b.x, a.y - b.y) : 0;
     };
 
-    // The middle of two fingers, which two-finger scrolling follows.
-    const fingersMiddle = () => {
+    // The middle of two fingers: where a pan moves the page from, and where a pinch is measured from.
+    const fingersCentre = () => {
       const [a, b] = Array.from(activePointers.values());
-      return a && b ? (a.y + b.y) / 2 : 0;
+      return a && b ? { x: (a.x + b.x) / 2, y: (a.y + b.y) / 2 } : { x: 0, y: 0 };
     };
 
     const beginPinch = () => {
@@ -546,7 +562,9 @@ export function GalaxyHero({
       rotVelY = 0;
       tiltVelocity = 0;
       twoFingers = true;
-      fingersY = fingersMiddle();
+      twoFingerGesture = "undecided";
+      twoFingerStart = fingersCentre();
+      fingersY = twoFingerStart.y;
       fingersVelocity = 0;
       fingersTime = performance.now();
       highlight(null);
@@ -560,6 +578,19 @@ export function GalaxyHero({
         focusZoom = THREE.MathUtils.clamp(pinchStartZoom * Math.pow(ratio, -PINCH_ZOOM_SENSITIVITY), 1, MAX_FOCUS_ZOOM);
       } else {
         zoomTarget = THREE.MathUtils.clamp(pinchStartZoom * Math.pow(ratio, PINCH_ZOOM_SENSITIVITY), MIN_ZOOM, MAX_ZOOM);
+      }
+    };
+
+    // Decides the two-finger gesture once the fingers have moved clearly. A pan then follows from where they began.
+    const decideTwoFingers = () => {
+      const centre = fingersCentre();
+      const spread = Math.abs(pinchDistance() - pinchStartDistance);
+      const drift = Math.hypot(centre.x - twoFingerStart.x, centre.y - twoFingerStart.y);
+      twoFingerGesture = decideTwoFingerGesture(spread, drift);
+      if (twoFingerGesture === "pan") {
+        fingersY = twoFingerStart.y;
+        fingersTime = performance.now();
+        fingersVelocity = 0;
       }
     };
 
@@ -594,7 +625,7 @@ export function GalaxyHero({
     const updateTwoFingerScroll = () => {
       if (state !== "IDLE") return;
       const now = performance.now();
-      const y = fingersMiddle();
+      const y = fingersCentre().y;
       const dy = y - fingersY;
       const seconds = Math.max((now - fingersTime) / 1000, 0.008);
       fingersVelocity = dy / seconds;
@@ -605,7 +636,7 @@ export function GalaxyHero({
 
     // When the fingers lift, the scroll carries on at the speed they were moving, if they were still moving.
     const releaseTwoFingers = () => {
-      if (state !== "IDLE") return;
+      if (state !== "IDLE" || twoFingerGesture !== "pan") return;
       const moving = performance.now() - fingersTime < 90;
       const speed = moving ? THREE.MathUtils.clamp(-fingersVelocity, -SCROLL_MAX, SCROLL_MAX) : 0;
       scrollVelocity = Math.abs(speed) > SCROLL_REST ? speed : 0;
@@ -634,8 +665,10 @@ export function GalaxyHero({
         activePointers.set(e.pointerId, { x: e.clientX, y: e.clientY });
       }
       if (activePointers.size >= 2) {
-        updatePinch();
-        updateTwoFingerScroll();
+        // Decided once per touch: a pinch zooms, or a pan scrolls, and never both at once.
+        if (twoFingerGesture === "undecided") decideTwoFingers();
+        if (twoFingerGesture === "pinch") updatePinch();
+        else if (twoFingerGesture === "pan") updateTwoFingerScroll();
         return;
       }
       if (!isDragging || activePointers.size !== 1) return;
@@ -684,6 +717,7 @@ export function GalaxyHero({
       if (twoFingers && activePointers.size < 2) {
         twoFingers = false;
         releaseTwoFingers();
+        twoFingerGesture = "undecided";
       }
       try {
         el.releasePointerCapture(e.pointerId);
