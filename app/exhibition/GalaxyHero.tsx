@@ -29,7 +29,7 @@ export interface GalaxyHeroProps {
   onHiResState?: (imageIndex: number, state: "loading" | "ready") => void;
   /** WebGL could not start. The page then offers the flat viewer instead. */
   onUnsupported?: () => void;
-  /** Page scroll progress, 0 (overview) to 1 (immersed). The page owns the scroll; the galaxy only reads it. */
+  /** Page scroll progress, 0 (the overview) to 1 (the far end of the scene). The page owns the scroll; the galaxy only reads it. */
   scrollProgressRef?: MutableRefObject<number>;
   /** Opens the overview from further out, pulling in over a few seconds. Read once, when the galaxy mounts. */
   intro?: boolean;
@@ -39,8 +39,12 @@ export interface GalaxyHeroProps {
 
 const MIN_CAMERA_DISTANCE = 5;
 const MAX_CAMERA_DISTANCE = 25;
-/** The camera's distance once the visitor has entered: just outside the ring of pictures. */
+/** The camera's distance at the far end of the scroll: just outside the ring of pictures. */
 const IMMERSED_DISTANCE = 11.5;
+/** How far the stars that rush past the visitor travel over the whole scroll, in world units. */
+const FLOW_TRAVEL = 60;
+/** The stars begin to show once the page has scrolled this far, so the overview at rest stays clean. */
+const FLOW_START = 0.12;
 /** Idle spin of the galaxy and its ring in radians per second, about 3° a second: a full turn in about two minutes. */
 const BASE_SPIN = 0.05;
 const DRAG_RADIANS_PER_PIXEL = 0.0035;
@@ -192,6 +196,9 @@ export function GalaxyHero({
     // 0 at the start of the opening, 1 once the camera has settled into the overview.
     let introT = introRef.current ? 0 : 1;
     let shiftApplied = 0;
+    // How far the stars have streamed towards the visitor, and how strongly they show. Both follow the scroll.
+    let flowPhase = 0;
+    let flowStrength = 0;
     const activePointers = new Map<number, { x: number; y: number }>();
     // The camera looks a little below the centre, so the galaxy sits above the controls at the foot of the page.
     const homeLook = new THREE.Vector3(0, -0.6, 0);
@@ -427,6 +434,13 @@ export function GalaxyHero({
           onFlyOutCompleteRef.current?.();
         }
       }
+
+      // ── The sky: the scroll carries the visitor through the stars. They are hidden while a picture is in focus. ──
+      const progress = scrollProgressRef?.current ?? 0;
+      flowPhase = springLerp(flowPhase, progress, 2.2, dt);
+      const flowWanted = !reduced && state === "IDLE" ? THREE.MathUtils.smoothstep(progress, 0, FLOW_START) : 0;
+      flowStrength = springLerp(flowStrength, flowWanted, 4, dt);
+      galaxy.setFlow(flowPhase * FLOW_TRAVEL, flowStrength);
 
       // ── Visited marks ──
       galaxy.setVisited(visitedRef.current);

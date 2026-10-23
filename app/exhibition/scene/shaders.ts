@@ -1,5 +1,15 @@
 // GLSL for the galaxy. Written for three.js ShaderMaterial, which compiles them as GLSL ES 3.00.
 
+/**
+ * How far a star has swung round the galaxy's turn, in radians. The arms sway back and forth on a slow beat.
+ * The sway is bounded, so they breathe in place. A swing that kept growing would wind the arms up into rings.
+ */
+const swingGlsl = /* glsl */ `
+  float swing(float radius, float time, float amount) {
+    return amount * sin(time * 0.25) / (0.7 + radius);
+  }
+`;
+
 export const pointVertex = /* glsl */ `
   attribute float aSize;
   attribute float aSeed;
@@ -11,9 +21,11 @@ export const pointVertex = /* glsl */ `
   uniform float uSwirl;
   varying vec3 vColor;
 
+  ${swingGlsl}
+
   void main() {
-    // The galaxy turns faster near its core than at its rim, as a real galaxy does.
-    float turn = uTime * uSwirl / (0.7 + length(position.xz));
+    // The core sways a little more than the rim, as a real galaxy's arms do.
+    float turn = swing(length(position.xz), uTime, uSwirl);
     vec3 p = position;
     p.xz = mat2(cos(turn), -sin(turn), sin(turn), cos(turn)) * position.xz;
     vec4 mvPosition = modelViewMatrix * vec4(p, 1.0);
@@ -115,6 +127,68 @@ export const hazeVertex = /* glsl */ `
   }
 `;
 
+/**
+ * Stars that rush past the visitor as the page scrolls. Each star keeps its lane and travels along the view
+ * from far to near, wrapping round, so the field never runs out. The stars fade at both ends of their run.
+ */
+export const flowVertex = /* glsl */ `
+  attribute float aSize;
+  attribute float aSeed;
+  attribute vec3 aColor;
+  uniform float uPixelRatio;
+  uniform float uScale;
+  uniform float uBrightness;
+  uniform float uFlow;
+  uniform float uNear;
+  uniform float uDepth;
+  uniform float uStrength;
+  varying vec3 vColor;
+
+  void main() {
+    // Along the view, a star's distance from the visitor wraps from far to near as the flow advances.
+    float along = mod(aSeed * uDepth - uFlow, uDepth);
+    float depth = uNear + along;
+    // Stars fade in at the far end, and fade out as they pass the visitor's face, so none pops in or out.
+    float far = 1.0 - smoothstep(0.85, 1.0, along / uDepth);
+    float near = smoothstep(uNear, uNear + 1.5, depth);
+    gl_PointSize = clamp(aSize * uScale * uPixelRatio * (9.0 / depth), 1.0, 18.0);
+    vColor = aColor * uBrightness * uStrength * far * near;
+    // The lane is fixed in the view, so the stars move outwards from the centre as they come.
+    gl_Position = projectionMatrix * vec4(position.xy, -depth, 1.0);
+  }
+`;
+
+/**
+ * Stars that float in the space round the galaxy. Each one bobs slowly on its own rhythm, and fades as it
+ * comes close to the visitor, so none of them flares across the view.
+ */
+export const driftVertex = /* glsl */ `
+  attribute float aSize;
+  attribute float aSeed;
+  attribute vec3 aColor;
+  uniform float uPixelRatio;
+  uniform float uScale;
+  uniform float uTime;
+  uniform float uBrightness;
+  varying vec3 vColor;
+
+  void main() {
+    float phase = aSeed * 6.2832;
+    vec3 p = position + vec3(
+      sin(uTime * (0.05 + aSeed * 0.04) + phase) * 0.35,
+      sin(uTime * (0.03 + aSeed * 0.05) + phase * 1.7) * 0.25,
+      cos(uTime * (0.04 + aSeed * 0.03) + phase * 0.6) * 0.35
+    );
+    vec4 mvPosition = modelViewMatrix * vec4(p, 1.0);
+    float depth = -mvPosition.z;
+    float twinkle = 0.75 + 0.25 * sin(uTime * (0.6 + aSeed) + phase * 3.0);
+    float near = smoothstep(1.5, 4.0, depth);
+    gl_PointSize = clamp(aSize * uScale * uPixelRatio * (9.0 / depth), 1.0, 18.0);
+    vColor = aColor * uBrightness * twinkle * near;
+    gl_Position = projectionMatrix * mvPosition;
+  }
+`;
+
 export const hazeFragment = /* glsl */ `
   uniform float uTime;
   uniform float uSwirl;
@@ -127,13 +201,15 @@ export const hazeFragment = /* glsl */ `
 
   ${noiseGlsl}
 
+  ${swingGlsl}
+
   void main() {
     // The plane lies flat in the galaxy: its x is the world x, and its y runs to minus the world z.
     vec2 w = vec2((vUv.x - 0.5) * 2.0 * uOuter, -(vUv.y - 0.5) * 2.0 * uOuter);
     float r = length(w);
     float theta = atan(w.y, w.x);
-    // The same turn as the stars, so the glow and the stars move as one galaxy.
-    float turn = uTime * uSwirl / (0.7 + r);
+    // The same sway as the stars, so the glow and the stars move as one galaxy.
+    float turn = swing(r, uTime, uSwirl);
     float phase = uArms * (theta + turn - uWinding * log(max(r, uInner) / uInner));
     // Sharp arms over a faint disc, so the spiral reads as arms, not as a ring.
     float arms = pow(0.5 + 0.5 * cos(phase), 6.0);

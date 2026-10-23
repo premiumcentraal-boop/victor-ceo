@@ -32,6 +32,24 @@ test.describe("the galaxy", () => {
     await expect(caption(page)).toHaveCount(0);
   });
 
+  test("a piece shows no written instructions, and the three gestures show once per session", async ({ page }) => {
+    await page.goto("/");
+    await expect(page.getByRole("button", { name: /Enter the galaxy|Back to overview/i })).toHaveCount(0);
+    await openFirstPieceFromList(page);
+
+    await expect(caption(page).getByRole("heading")).toBeFocused();
+    await expect(caption(page)).not.toContainText(/zoom|pinch|drag|esc|swipe|scroll/i);
+    await expect(page.locator("[data-gesture-hint]")).toBeVisible();
+    await expect(page.locator("[data-gesture-hint]")).toHaveCount(0, { timeout: 6000 });
+    expect(await page.evaluate(() => sessionStorage.getItem("victor-ceo:exhibition:gestures"))).toBe("1");
+
+    await page.keyboard.press("Escape");
+    await expect(galaxy(page)).toHaveAttribute("data-focus-state", "overview");
+    await openFirstPieceFromList(page);
+    await expect(caption(page).getByRole("heading")).toBeFocused();
+    await expect(page.locator("[data-gesture-hint]")).toHaveCount(0);
+  });
+
   test("a grid card scrolls to the galaxy and flies to its piece", async ({ page }) => {
     await page.goto("/");
     // The grid card holds the picture; the screen-reader list has a text-only button with the same title.

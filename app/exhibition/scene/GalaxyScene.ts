@@ -1,6 +1,22 @@
 import * as THREE from "three";
-import { GALAXY, GALAXY_LAYERS, STARFIELD, galaxyLayerPoints, homeDirection, placePictures, starfieldPoints, type GalaxyLayer } from "./layout";
-import { fullscreenVertex, hazeFragment, hazeVertex, nebulaFragment, pointFragment, pointVertex } from "./shaders";
+import {
+  DEEP_FIELD,
+  DRIFT,
+  FLOW,
+  GALAXY,
+  GALAXY_LAYERS,
+  STARFIELD,
+  deepFieldPoints,
+  driftPoints,
+  flowPoints,
+  galaxyLayerPoints,
+  homeDirection,
+  placePictures,
+  starfieldPoints,
+  type GalaxyLayer,
+  type LayerPoints,
+} from "./layout";
+import { driftVertex, flowVertex, fullscreenVertex, hazeFragment, hazeVertex, nebulaFragment, pointFragment, pointVertex } from "./shaders";
 
 /** How much detail the scene draws. Steps down when a device cannot hold its frame rate. */
 export type QualityTier = "high" | "medium" | "low";
@@ -16,11 +32,16 @@ const TIER_ORDER: QualityTier[] = ["high", "medium", "low"];
 const SLOW_FRAME_MS = 26;
 
 const FOV_LANDSCAPE = 40;
+/** The far plane sits beyond the deep field, so the furthest stars are drawn. */
+const FAR_PLANE = 300;
 /** On a portrait screen the ring of pictures is framed by its width, so this is the half-width kept in view. */
 const PHONE_HALF_WIDTH = 4.4;
 const BASE_HOME_DISTANCE = 13;
-/** How fast the galaxy turns. The core turns faster than the rim. */
-const SWIRL = 0.55;
+/**
+ * How far the arms sway round, in radians at the core, and less further out. The sway swings back and forth
+ * and never winds up, so the arms keep their shape however long the visitor stays.
+ */
+const SWIRL = 0.22;
 /** The glow of the spiral arms, flat in the galaxy's plane. It stays inside the ring of pictures. */
 const HAZE_RADIUS = GALAXY.outerRadius * 1.1;
 const MAX_HOME_DISTANCE = 22;
@@ -128,6 +149,9 @@ export class GalaxyScene {
   private readonly layers: { points: THREE.Points; material: THREE.ShaderMaterial; count: number }[] = [];
   private haze: THREE.Mesh<THREE.PlaneGeometry, THREE.ShaderMaterial> | null = null;
   private coreGlow: THREE.Sprite | null = null;
+  private flowMaterial: THREE.ShaderMaterial | null = null;
+  private flowDistance = 0;
+  private flowStrength = 0;
   private readonly nebula: NebulaPass;
   private readonly fixedStep: boolean;
   private readonly forcedTier: boolean;
@@ -177,12 +201,14 @@ export class GalaxyScene {
     container.appendChild(this.domElement);
     activeScenes.set(container, this);
 
-    this.camera = new THREE.PerspectiveCamera(FOV_LANDSCAPE, 1, 0.1, 100);
+    this.camera = new THREE.PerspectiveCamera(FOV_LANDSCAPE, 1, 0.1, FAR_PLANE);
     this.scene.add(this.group);
     this.haloTexture = makeHaloTexture();
 
     this.buildGalaxy();
-    this.buildStarfield();
+    this.buildSky();
+    this.buildDrift();
+    this.buildFlow();
     this.buildPictures(images);
     this.nebula = this.buildNebula();
 
@@ -223,6 +249,15 @@ export class GalaxyScene {
     this.running = false;
     cancelAnimationFrame(this.frameId);
     this.clock.stop();
+  }
+
+  /**
+   * Sets how far the stars that rush past the visitor have travelled, and how strongly they show. The caller
+   * drives both from the page's scroll, so scrolling carries the visitor through the sky. Zero hides them.
+   */
+  setFlow(distance: number, strength: number): void {
+    this.flowDistance = distance;
+    this.flowStrength = strength;
   }
 
   /**
@@ -426,35 +461,48 @@ export class GalaxyScene {
 
   // ── Construction ─────────────────────────────────────────────────────────
 
+  /**
+   * One layer of stars: its geometry from `data`, drawn with the given shader and values. The layer joins the
+   * quality tiers, so a weaker device draws fewer of its stars.
+   */
+  private addPoints(parent: THREE.Object3D, data: LayerPoints, vertexShader: string, values: Record<string, number>, count: number): THREE.Points {
+    const geometry = new THREE.BufferGeometry();
+    geometry.setAttribute("position", new THREE.BufferAttribute(data.positions, 3));
+    geometry.setAttribute("aColor", new THREE.BufferAttribute(data.colors, 3));
+    geometry.setAttribute("aSize", new THREE.BufferAttribute(data.sizes, 1));
+    geometry.setAttribute("aSeed", new THREE.BufferAttribute(data.seeds, 1));
+    const uniforms: Record<string, THREE.IUniform> = {
+      uPixelRatio: { value: this.renderer.getPixelRatio() },
+      uTime: { value: 0 },
+    };
+    for (const [name, value] of Object.entries(values)) uniforms[name] = { value };
+    const material = new THREE.ShaderMaterial({
+      vertexShader,
+      fragmentShader: pointFragment,
+      uniforms,
+      transparent: true,
+      depthWrite: false,
+      blending: THREE.AdditiveBlending,
+    });
+    const points = new THREE.Points(geometry, material);
+    parent.add(points);
+    this.layers.push({ points, material, count });
+    return points;
+  }
+
   private buildGalaxy(): void {
     const layerOrder: GalaxyLayer[] = ["dust", "stars", "core"];
     const brightness: Record<GalaxyLayer, number> = { dust: 0.9, stars: 1.5, core: 1.6 };
     const scale: Record<GalaxyLayer, number> = { dust: 2.2, stars: 2.8, core: 3.4 };
 
     for (const name of layerOrder) {
-      const data = galaxyLayerPoints(name);
-      const geometry = new THREE.BufferGeometry();
-      geometry.setAttribute("position", new THREE.BufferAttribute(data.positions, 3));
-      geometry.setAttribute("aColor", new THREE.BufferAttribute(data.colors, 3));
-      geometry.setAttribute("aSize", new THREE.BufferAttribute(data.sizes, 1));
-      geometry.setAttribute("aSeed", new THREE.BufferAttribute(data.seeds, 1));
-      const material = new THREE.ShaderMaterial({
-        vertexShader: pointVertex,
-        fragmentShader: pointFragment,
-        uniforms: {
-          uPixelRatio: { value: this.renderer.getPixelRatio() },
-          uScale: { value: scale[name] },
-          uTime: { value: 0 },
-          uBrightness: { value: brightness[name] },
-          uSwirl: { value: SWIRL },
-        },
-        transparent: true,
-        depthWrite: false,
-        blending: THREE.AdditiveBlending,
-      });
-      const points = new THREE.Points(geometry, material);
-      this.group.add(points);
-      this.layers.push({ points, material, count: GALAXY_LAYERS[name].count });
+      this.addPoints(
+        this.group,
+        galaxyLayerPoints(name),
+        pointVertex,
+        { uScale: scale[name], uBrightness: brightness[name], uSwirl: SWIRL },
+        GALAXY_LAYERS[name].count
+      );
     }
 
     this.buildHaze();
@@ -505,31 +553,29 @@ export class GalaxyScene {
     this.group.add(this.coreGlow);
   }
 
-  /** A far starfield on a shell round the scene. It does not turn with the galaxy, so it reads as depth. */
-  private buildStarfield(): void {
-    const data = starfieldPoints();
-    const geometry = new THREE.BufferGeometry();
-    geometry.setAttribute("position", new THREE.BufferAttribute(data.positions, 3));
-    geometry.setAttribute("aColor", new THREE.BufferAttribute(data.colors, 3));
-    geometry.setAttribute("aSize", new THREE.BufferAttribute(data.sizes, 1));
-    geometry.setAttribute("aSeed", new THREE.BufferAttribute(data.seeds, 1));
-    const material = new THREE.ShaderMaterial({
-      vertexShader: pointVertex,
-      fragmentShader: pointFragment,
-      uniforms: {
-        uPixelRatio: { value: this.renderer.getPixelRatio() },
-        uScale: { value: 2.6 },
-        uTime: { value: 0 },
-        uBrightness: { value: 1.0 },
-        uSwirl: { value: 0 },
-      },
-      transparent: true,
-      depthWrite: false,
-      blending: THREE.AdditiveBlending,
-    });
-    const points = new THREE.Points(geometry, material);
-    this.scene.add(points);
-    this.layers.push({ points, material, count: STARFIELD.count });
+  /** The stars beyond the galaxy: a far field and a deeper one further out. They do not turn with the galaxy. */
+  private buildSky(): void {
+    this.addPoints(this.scene, starfieldPoints(), pointVertex, { uScale: 2.6, uBrightness: 1.0, uSwirl: 0 }, STARFIELD.count);
+    this.addPoints(this.scene, deepFieldPoints(), pointVertex, { uScale: 2.2, uBrightness: 0.8, uSwirl: 0 }, DEEP_FIELD.count);
+  }
+
+  /** Stars floating in the space round the galaxy. They bob in place, outside the galaxy's own turn. */
+  private buildDrift(): void {
+    this.addPoints(this.scene, driftPoints(), driftVertex, { uScale: 3.6, uBrightness: 0.8 }, DRIFT.count);
+  }
+
+  /** The stars that rush past the visitor as the page scrolls. They are drawn in the view, and hidden until the flow starts. */
+  private buildFlow(): void {
+    const points = this.addPoints(
+      this.scene,
+      flowPoints(),
+      flowVertex,
+      { uScale: 4.6, uBrightness: 1.1, uNear: FLOW.near, uDepth: FLOW.depth, uFlow: 0, uStrength: 0 },
+      FLOW.count
+    );
+    // The lanes are in the view, not the world, so the stars would be culled from the wrong place.
+    points.frustumCulled = false;
+    this.flowMaterial = points.material as THREE.ShaderMaterial;
   }
 
   private buildPictures(images: string[]): void {
@@ -798,6 +844,10 @@ export class GalaxyScene {
     this.nebula.uniforms.uTime.value = this.elapsed;
     if (this.haze) this.haze.material.uniforms.uTime.value = this.elapsed;
     if (this.coreGlow) this.coreGlow.material.opacity = 0.8 + 0.12 * Math.sin(this.elapsed * 0.7);
+    if (this.flowMaterial) {
+      this.flowMaterial.uniforms.uFlow.value = this.flowDistance;
+      this.flowMaterial.uniforms.uStrength.value = this.flowStrength;
+    }
 
     this.options.onFrame?.(dt, this.elapsed);
     this.updateHover(dt);
