@@ -4,6 +4,7 @@ import { GalaxyScene } from "./scene/GalaxyScene";
 import { pictureTabOrder, VIEW } from "./scene/layout";
 import { EXIT_DURATION, FOCUS_DURATION, FocusMove, fitDistance, framedPose, type Pose } from "./camera/focus";
 import { restShift, type OpenArea } from "./camera/framing";
+import { coreTravel } from "./camera/zoom";
 import { glideStep } from "./input/glide";
 
 type FlyState = "IDLE" | "FLYING_IN" | "FOCUSED" | "FLYING_OUT";
@@ -41,10 +42,12 @@ export interface GalaxyHeroProps {
   openArea?: OpenArea | null;
 }
 
-const MIN_CAMERA_DISTANCE = 5;
+const MIN_CAMERA_DISTANCE = 3.5;
 const MAX_CAMERA_DISTANCE = 25;
-/** The camera's distance at the far end of the scroll: just outside the ring of pictures. */
-const IMMERSED_DISTANCE = 11.5;
+/** The camera's distance at the core, at the far end of the scroll. It flies above the disc, down to the centre. */
+const CORE_DISTANCE = 4.2;
+/** The point the camera looks at: the middle of the overview, sliding to the core as the camera arrives. */
+const CORE_LOOK = new THREE.Vector3(0, 0, 0);
 /** How far the stars that rush past the visitor travel over the whole scroll, in world units. */
 const FLOW_TRAVEL = 60;
 /** The stars begin to show once the page has scrolled this far, so the overview at rest stays clean. */
@@ -281,15 +284,16 @@ export function GalaxyHero({
     // Where the scroll position puts the camera in the overview.
     const dollyPose = (): Pose => {
       const progress = scrollProgressRef?.current ?? 0;
-      const eased = progress * progress * (3 - 2 * progress);
+      const travel = coreTravel(progress);
       const pull = 1 + INTRO_PULL * (1 - easeOutCubic(introT));
       const distance = THREE.MathUtils.clamp(
-        THREE.MathUtils.lerp(galaxy.framingDistance, IMMERSED_DISTANCE, eased) * zoom * pull,
+        THREE.MathUtils.lerp(galaxy.framingDistance * zoom * pull, CORE_DISTANCE, travel),
         MIN_CAMERA_DISTANCE,
         MAX_CAMERA_DISTANCE
       );
       const position = galaxy.homePosition(tilt).normalize().multiplyScalar(distance);
-      const matrix = new THREE.Matrix4().lookAt(position, homeLook, UP);
+      const look = homeLook.clone().lerp(CORE_LOOK, travel);
+      const matrix = new THREE.Matrix4().lookAt(position, look, UP);
       return {
         position,
         quaternion: new THREE.Quaternion().setFromRotationMatrix(matrix),
@@ -484,6 +488,7 @@ export function GalaxyHero({
       const flowWanted = !reduced && state === "IDLE" ? THREE.MathUtils.smoothstep(progress, 0, FLOW_START) : 0;
       flowStrength = springLerp(flowStrength, flowWanted, 4, dt);
       galaxy.setFlow(flowPhase * FLOW_TRAVEL, flowStrength);
+      galaxy.setCoreTravel(coreTravel(progress));
 
       // ── Visited marks ──
       galaxy.setVisited(visitedRef.current);
