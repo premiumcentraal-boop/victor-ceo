@@ -1,7 +1,7 @@
 import { useEffect, useMemo, useRef, useState, type KeyboardEvent, type MutableRefObject } from "react";
 import * as THREE from "three";
 import { GalaxyScene } from "./scene/GalaxyScene";
-import { pictureTabOrder } from "./scene/layout";
+import { pictureTabOrder, VIEW } from "./scene/layout";
 import { EXIT_DURATION, FOCUS_DURATION, FocusMove, fitDistance, framedPose, type Pose } from "./camera/focus";
 
 type FlyState = "IDLE" | "FLYING_IN" | "FOCUSED" | "FLYING_OUT";
@@ -44,10 +44,16 @@ const IMMERSED_DISTANCE = 11.5;
 /** Idle spin of the galaxy and its ring in radians per second, about 3° a second: a full turn in about two minutes. */
 const BASE_SPIN = 0.05;
 const DRAG_RADIANS_PER_PIXEL = 0.0035;
+/** The overview's tilt in radians: the home view, and the lowest and highest a mouse drag can reach. */
+const TILT_HOME = VIEW.pitch;
+const TILT_MIN = (8 * Math.PI) / 180;
+const TILT_MAX = (50 * Math.PI) / 180;
+/** How far a mouse drag tilts the view, in radians per pixel. Dragging down looks down on the galaxy. */
+const TILT_PER_PIXEL = 0.004;
 const PINCH_ZOOM_SENSITIVITY = 1.15;
 /** Pinch zoom in the overview is kept within this range of the scroll position's distance. */
-const MIN_ZOOM = 0.8;
-const MAX_ZOOM = 1.3;
+const MIN_ZOOM = 0.75;
+const MAX_ZOOM = 1.45;
 /** Zoom inside a focused picture: from the framed view to three times closer. */
 const MAX_FOCUS_ZOOM = 3;
 /** The focus move narrows the lens to this share of the overview lens, for a closer, more cinematic view. */
@@ -174,7 +180,11 @@ export function GalaxyHero({
     let hadMultiPointer = false;
     let pinchStartDistance = 0;
     let pinchStartZoom = 1;
+    // The overview's tilt and zoom. Each eases towards its target, which the visitor's input moves.
+    let tilt = TILT_HOME;
+    let tiltTarget = TILT_HOME;
     let zoom = 1;
+    let zoomTarget = 1;
     let focusZoom = 1;
     const focusPan = { x: 0, y: 0 };
     let focusPicture: number | null = null;
@@ -239,7 +249,7 @@ export function GalaxyHero({
         MIN_CAMERA_DISTANCE,
         MAX_CAMERA_DISTANCE
       );
-      const position = galaxy.homePosition().normalize().multiplyScalar(distance);
+      const position = galaxy.homePosition(tilt).normalize().multiplyScalar(distance);
       const matrix = new THREE.Matrix4().lookAt(position, homeLook, UP);
       return {
         position,
@@ -351,7 +361,7 @@ export function GalaxyHero({
         }
       }
 
-      // ── Rotation: horizontal drags turn the galaxy, with momentum. Vertical movement stays with the page. ──
+      // ── Rotation: horizontal drags turn the galaxy, with momentum. Vertical movement stays with the page, except a mouse drag, which tilts the view. ──
       if (state === "IDLE" && !isDragging) {
         rotVelY = springLerp(rotVelY, spin, 1.2, dt);
         group.rotation.y += rotVelY * dt;
@@ -367,6 +377,9 @@ export function GalaxyHero({
       // ── The camera ──
       const header = headerHeight();
       if (introT < 1) introT = Math.min(1, introT + dt / INTRO_SECONDS);
+      // The tilt and zoom ease towards the visitor's input. Reduced motion takes them at once.
+      tilt = reduced ? tiltTarget : springLerp(tilt, tiltTarget, 6, dt);
+      zoom = reduced ? zoomTarget : springLerp(zoom, zoomTarget, 6, dt);
       if (state === "IDLE") {
         const pose = dollyPose();
         if (!reduced) {
@@ -445,7 +458,7 @@ export function GalaxyHero({
     galaxy.setVisited(visitedRef.current);
 
     // ── Input ──
-    // In the overview, these handlers turn the galaxy sideways, pinch, pick and highlight.
+    // In the overview, these handlers turn the galaxy sideways, tilt it with the mouse, pinch, pick and highlight.
     // Once a picture is focused, they zoom and pan it, and a swipe down leaves.
     const el = galaxy.domElement;
     el.style.cursor = "grab";
@@ -457,7 +470,7 @@ export function GalaxyHero({
 
     const beginPinch = () => {
       pinchStartDistance = pinchDistance();
-      pinchStartZoom = state === "FOCUSED" ? focusZoom : zoom;
+      pinchStartZoom = state === "FOCUSED" ? focusZoom : zoomTarget;
       hadMultiPointer = true;
       isDragging = false;
       dragDistance = 8;
@@ -472,7 +485,7 @@ export function GalaxyHero({
       if (state === "FOCUSED") {
         focusZoom = THREE.MathUtils.clamp(pinchStartZoom * Math.pow(ratio, -PINCH_ZOOM_SENSITIVITY), 1, MAX_FOCUS_ZOOM);
       } else {
-        zoom = THREE.MathUtils.clamp(pinchStartZoom * Math.pow(ratio, PINCH_ZOOM_SENSITIVITY), MIN_ZOOM, MAX_ZOOM);
+        zoomTarget = THREE.MathUtils.clamp(pinchStartZoom * Math.pow(ratio, PINCH_ZOOM_SENSITIVITY), MIN_ZOOM, MAX_ZOOM);
       }
     };
 
@@ -535,6 +548,10 @@ export function GalaxyHero({
         }
       } else {
         galaxy.group.rotation.y += dx * DRAG_RADIANS_PER_PIXEL;
+        // A mouse drag tilts the view. Touch keeps vertical movement, for the page's scroll.
+        if (e.pointerType === "mouse") {
+          tiltTarget = THREE.MathUtils.clamp(tiltTarget + dy * TILT_PER_PIXEL, TILT_MIN, TILT_MAX);
+        }
         // Momentum after release comes from the speed of the last movement.
         const now = performance.now();
         const seconds = Math.max((now - lastMoveTime) / 1000, 0.008);
@@ -575,11 +592,16 @@ export function GalaxyHero({
       }
     };
 
-    // Wheel zooms a focused picture. In the overview the page keeps its scroll.
+    // Wheel zooms a focused picture. In the overview, a trackpad pinch (a wheel with ctrlKey) zooms the
+    // galaxy, and a plain wheel keeps the page's scroll.
     const onWheel = (e: WheelEvent) => {
-      if (state !== "FOCUSED") return;
-      e.preventDefault();
-      focusZoom = THREE.MathUtils.clamp(focusZoom * Math.exp(-e.deltaY * 0.0015), 1, MAX_FOCUS_ZOOM);
+      if (state === "FOCUSED") {
+        e.preventDefault();
+        focusZoom = THREE.MathUtils.clamp(focusZoom * Math.exp(-e.deltaY * 0.0015), 1, MAX_FOCUS_ZOOM);
+      } else if (state === "IDLE" && e.ctrlKey) {
+        e.preventDefault();
+        zoomTarget = THREE.MathUtils.clamp(zoomTarget * Math.exp(-e.deltaY * 0.01), MIN_ZOOM, MAX_ZOOM);
+      }
     };
 
     // Hover is for mouse pointers only. Touch has no hover, so nothing sticks after a tap.
