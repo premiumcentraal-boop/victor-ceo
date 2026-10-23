@@ -1,6 +1,6 @@
 import React, { useState } from "react";
 import { motion, AnimatePresence } from "motion/react";
-import { Terminal, Send, CheckCircle2 } from "lucide-react";
+import { Sparkles, Send } from "lucide-react";
 import { LiquidGlassEffect } from "../components/LiquidGlassEffect";
 
 export function PreRelease() {
@@ -31,14 +31,14 @@ export function PreRelease() {
           <div className="flex-1 w-full">
             <div className="flex items-center justify-between mb-3">
               <h1 className="text-cyan-400 font-mono text-xs uppercase tracking-[0.2em] flex items-center gap-2">
-                <Terminal size={14} />
+                <Sparkles size={14} />
                 Exclusive access
               </h1>
             </div>
             
-            <h2 className="text-3xl font-light text-white mb-2">Join the Pre-Release</h2>
+            <h2 className="text-3xl md:text-4xl font-light text-white mb-3">Exclusive access to new AI builds and art</h2>
             <p className="text-white/50 text-sm md:text-base font-light mb-8 max-w-xl">
-              Gain exclusive access to my unreleased art exhibition and AI Prediction Engine ahead of the public launch. Receive priority signals and a glimpse into a new language of art.
+              Be first to explore experimental AI builds, private releases, and new artwork before they are shared publicly.
             </p>
             
             <AnimatePresence mode="wait">
@@ -73,7 +73,7 @@ export function PreRelease() {
                     className="w-full md:w-auto px-8 py-4 rounded-2xl bg-cyan-500/10 border border-cyan-500/50 text-cyan-400 text-base font-medium hover:bg-cyan-500/20 hover:shadow-[0_0_20px_rgba(34,211,238,0.4)] transition-all flex items-center justify-center gap-3 whitespace-nowrap"
                   >
                     <Send size={20} />
-                    Initiate
+                    Request access
                   </button>
                 </motion.form>
               ) : (
@@ -95,8 +95,8 @@ export function PreRelease() {
                       </header>
 
                       <div className="relative">
-                        <h1 className="font-sans font-light text-4xl leading-none text-white tracking-tight mb-3">THE<br/>EXHIBITION</h1>
-                        <p className="font-mono text-[10px] tracking-widest text-cyan-400/80 uppercase">Exclusive Access Ticket</p>
+                        <h1 className="font-sans font-light text-4xl leading-none text-white tracking-tight mb-3">AI &amp;<br/>ART</h1>
+                        <p className="font-mono text-[10px] tracking-widest text-cyan-400/80 uppercase">Exclusive access</p>
                       </div>
 
                       <footer className="relative flex justify-between gap-4 border-t border-white/10 pt-4">
