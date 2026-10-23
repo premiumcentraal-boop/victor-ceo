@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { coreTravel, cubicBezier } from "./zoom";
+import { coreTravel, cubicBezier, flareAt, shockAt } from "./zoom";
 
 describe("cubicBezier", () => {
   it("runs from 0 to 1 over the whole curve", () => {
@@ -35,5 +35,31 @@ describe("coreTravel", () => {
   it("rushes at the end, so the last fifth of the scroll covers most of the way in", () => {
     const lastFifth = coreTravel(1) - coreTravel(0.8);
     expect(lastFifth).toBeGreaterThan(0.4);
+  });
+});
+
+describe("flareAt", () => {
+  it("is dark at the core and gone once the gallery has the screen", () => {
+    expect(flareAt(0)).toBeCloseTo(0, 6);
+    expect(flareAt(1)).toBeCloseTo(0, 6);
+  });
+
+  it("peaks as the camera passes through the core", () => {
+    expect(flareAt(0.4)).toBeGreaterThan(0.99);
+    expect(flareAt(0.4)).toBeGreaterThan(flareAt(0.2));
+    expect(flareAt(0.4)).toBeGreaterThan(flareAt(0.7));
+  });
+});
+
+describe("shockAt", () => {
+  it("has no ring before the camera reaches the core", () => {
+    expect(shockAt(0.1).opacity).toBe(0);
+  });
+
+  it("grows and fades as the camera passes through", () => {
+    const early = shockAt(0.4);
+    const late = shockAt(0.9);
+    expect(late.scale).toBeGreaterThan(early.scale);
+    expect(late.opacity).toBeLessThan(early.opacity);
   });
 });

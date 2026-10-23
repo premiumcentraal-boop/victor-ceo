@@ -6,7 +6,7 @@ import { GestureHint } from "../exhibition/ui/GestureHint";
 import { galleryPictures as galleryImages, pictureSrc } from "../exhibition/data/pictures";
 import { loadVisited, saveVisited } from "../exhibition/state/visited";
 import { markIntroPlayed, shouldPlayIntro } from "../exhibition/state/intro";
-import { AnimatePresence, motion, useMotionValueEvent, useScroll, useTransform } from "motion/react";
+import { AnimatePresence, motion, useMotionValue, useMotionValueEvent, useScroll, useTransform } from "motion/react";
 import { ImageViewer } from "../components/ImageViewer";
 import { useReducedMotion } from "../hooks/useReducedMotion";
 
@@ -80,6 +80,38 @@ export function TheExhibition() {
   const headlineOpacity = useTransform(scrollYProgress, [0, 0.45], [1, 0]);
   const headlineY = useTransform(scrollYProgress, [0, 0.45], [0, -48]);
   const cueOpacity = useTransform(scrollYProgress, [0, 0.12], [1, 0]);
+
+  // ── The reveal: once the scene unpins, the camera passes through the core as the gallery rises. ──
+  // It is measured from the page, so it runs over exactly one screen of scrolling after the scene lets go.
+  const { scrollY } = useScroll();
+  const revealRef = useRef(0);
+  const revealValue = useMotionValue(0);
+  // The stage fades to the gallery's black as the camera passes through the light.
+  const stageOpacity = useTransform(revealValue, [0.3, 0.75], [1, 0]);
+  const revealSpan = useRef({ start: 0, length: 1 });
+  const revealAt = useCallback((y: number) => {
+    const { start, length } = revealSpan.current;
+    const r = Math.min(1, Math.max(0, (y - start) / length));
+    revealRef.current = r;
+    revealValue.set(r);
+  }, [revealValue]);
+  useLayoutEffect(() => {
+    const scene = sceneRef.current;
+    const stage = scene?.firstElementChild as HTMLElement | null | undefined;
+    if (!scene || !stage) return;
+    const measure = () => {
+      const sceneTop = scene.getBoundingClientRect().top + window.scrollY;
+      const travel = scene.offsetHeight - stage.offsetHeight;
+      revealSpan.current = { start: sceneTop + travel, length: stage.offsetHeight };
+      revealAt(window.scrollY);
+    };
+    measure();
+    const observer = new ResizeObserver(measure);
+    observer.observe(scene);
+    observer.observe(stage);
+    return () => observer.disconnect();
+  }, [revealAt]);
+  useMotionValueEvent(scrollY, "change", revealAt);
 
   // Brings the galaxy into view before a flight, unless it already is. Resolves when the scroll settles.
   const scrollToGalaxy = useCallback((): Promise<void> => {
@@ -173,7 +205,7 @@ export function TheExhibition() {
     <main className="relative z-10 flex-1 w-full flex flex-col">
       {/* ═══ HERO: THE GALAXY. The page scrolls through this scene while the stage stays pinned. ═══ */}
       <section ref={sceneRef} aria-label="The galaxy" className="relative w-full h-[260svh] -mt-[var(--header-h)]">
-        <div className="sticky top-0 w-full h-[100svh] overflow-hidden">
+        <motion.div style={{ opacity: stageOpacity }} className="sticky top-0 w-full h-[100svh] overflow-hidden">
           {/* Overlay text */}
           <motion.div
             ref={headlineRef}
@@ -210,6 +242,7 @@ export function TheExhibition() {
               onHiResState={handleHiResState}
               onUnsupported={handleUnsupported}
               scrollProgressRef={scrollProgressRef}
+              revealRef={revealRef}
               intro={intro}
               reducedMotion={reducedMotion}
               openArea={openArea}
@@ -269,7 +302,7 @@ export function TheExhibition() {
 
           {/* On the first piece of a session, the three gestures are shown once, without words. */}
           {focusedIndex !== null && arrived && !flatMode && <GestureHint />}
-        </div>
+        </motion.div>
       </section>
 
       {/* ═══ GALLERY GRID ═══════════════════════════════════════════ */}

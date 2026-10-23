@@ -38,3 +38,22 @@ const CORE_CURVE = cubicBezier(0.55, 0, 0.85, 0.5);
 export function coreTravel(progress: number): number {
   return CORE_CURVE(progress);
 }
+
+/**
+ * How bright the core's light blooms as the camera passes through it. It is zero until the camera has reached
+ * the core, peaks as it passes through, and is gone by the time the gallery has taken the screen.
+ */
+export function flareAt(reveal: number): number {
+  const t = Math.min(1, Math.max(0, reveal / 0.8));
+  return Math.sin(Math.PI * t);
+}
+
+/**
+ * The shockwave: a ring of light that leaves the core as the camera passes through it. It grows and fades.
+ * Returns its scale in world units, and its opacity.
+ */
+export function shockAt(reveal: number): { scale: number; opacity: number } {
+  const t = Math.min(1, Math.max(0, (reveal - 0.2) / 0.8));
+  if (t <= 0) return { scale: 2, opacity: 0 };
+  return { scale: 2 + 30 * t * t, opacity: 0.9 * (1 - t) ** 1.5 };
+}

@@ -53,6 +53,8 @@ test.describe("the galaxy on a phone", () => {
     const before = Number(await galaxy(page).getAttribute("data-zoom"));
     await drag(page, [{ x: 170, y: 430 }, { x: 220, y: 430 }], [{ x: 110, y: 430 }, { x: 280, y: 430 }]);
     await expect.poll(async () => Number(await galaxy(page).getAttribute("data-zoom"))).toBeLessThan(before - 0.1);
+    // A pinch zooms and nothing else: the page does not move under the fingers.
+    expect(await scrollY(page)).toBe(0);
   });
 
   test("one finger on the scroll cue scrolls the scene, as it would on any page", async ({ page }) => {

@@ -17,6 +17,7 @@ import {
   type LayerPoints,
 } from "./layout";
 import { driftVertex, flowVertex, fullscreenVertex, hazeFragment, hazeVertex, nebulaFragment, pointFragment, pointVertex } from "./shaders";
+import { flareAt, shockAt } from "../camera/zoom";
 
 /** How much detail the scene draws. Steps down when a device cannot hold its frame rate. */
 export type QualityTier = "high" | "medium" | "low";
@@ -99,6 +100,25 @@ interface NebulaPass {
   camera: THREE.OrthographicCamera;
 }
 
+/** A ring of soft light for the shockwave: bright on a circle, dark at its centre and its edge. */
+function makeRingTexture(): THREE.CanvasTexture {
+  const canvas = document.createElement("canvas");
+  canvas.width = 256;
+  canvas.height = 256;
+  const ctx = canvas.getContext("2d");
+  if (ctx) {
+    const gradient = ctx.createRadialGradient(128, 128, 0, 128, 128, 128);
+    gradient.addColorStop(0, "rgba(255, 240, 210, 0)");
+    gradient.addColorStop(0.62, "rgba(255, 240, 210, 0)");
+    gradient.addColorStop(0.84, "rgba(255, 236, 200, 1)");
+    gradient.addColorStop(0.95, "rgba(255, 220, 170, 0)");
+    gradient.addColorStop(1, "rgba(255, 220, 170, 0)");
+    ctx.fillStyle = gradient;
+    ctx.fillRect(0, 0, 256, 256);
+  }
+  return new THREE.CanvasTexture(canvas);
+}
+
 function makeHaloTexture(): THREE.CanvasTexture {
   const canvas = document.createElement("canvas");
   canvas.width = 128;
@@ -155,6 +175,9 @@ export class GalaxyScene {
   private coreMaterial: THREE.ShaderMaterial | null = null;
   /** How far the camera has dived into the core, 0 to 1. The core softens as the camera nears, so it glows rather than whites out. */
   private coreTravel = 0;
+  /** How far the camera has passed through the core, past the gallery's arrival, 0 to 1. Drives the flare and the shockwave. */
+  private reveal = 0;
+  private shock: THREE.Sprite | null = null;
   private flowDistance = 0;
   private flowStrength = 0;
   private readonly nebula: NebulaPass;
@@ -268,6 +291,11 @@ export class GalaxyScene {
   /** Sets how far the camera has dived into the core. The core dims and softens as it closes in, so it glows. */
   setCoreTravel(travel: number): void {
     this.coreTravel = travel;
+  }
+
+  /** Sets how far the camera has passed through the core as the gallery rises, 0 to 1. The core flares and a ring of light leaves it. */
+  setReveal(reveal: number): void {
+    this.reveal = reveal;
   }
 
   /**
@@ -454,6 +482,10 @@ export class GalaxyScene {
       this.coreGlow.material.map?.dispose();
       this.coreGlow.material.dispose();
     }
+    if (this.shock) {
+      this.shock.material.map?.dispose();
+      this.shock.material.dispose();
+    }
     this.nebula.target.dispose();
 
     this.renderer.dispose();
@@ -562,6 +594,15 @@ export class GalaxyScene {
     this.coreGlow = new THREE.Sprite(material);
     this.coreGlow.scale.set(2.8, 2.8, 1);
     this.group.add(this.coreGlow);
+    this.buildShock();
+  }
+
+  /** The shockwave: a ring of light that leaves the core as the camera passes through it. Hidden until the reveal. */
+  private buildShock(): void {
+    const material = new THREE.SpriteMaterial({ map: makeRingTexture(), blending: THREE.AdditiveBlending, transparent: true, depthWrite: false, opacity: 0 });
+    this.shock = new THREE.Sprite(material);
+    this.shock.scale.set(2, 2, 1);
+    this.group.add(this.shock);
   }
 
   /** The stars beyond the galaxy: a far field and a deeper one further out. They do not turn with the galaxy. */
@@ -856,8 +897,18 @@ export class GalaxyScene {
     if (this.haze) this.haze.material.uniforms.uTime.value = this.elapsed;
     // Close to the core, the core dims by up to half, so the dive ends in a glow rather than a white-out.
     const soften = 1 - 0.5 * this.coreTravel;
-    if (this.coreMaterial) this.coreMaterial.uniforms.uBrightness.value = CORE_BRIGHTNESS * soften;
-    if (this.coreGlow) this.coreGlow.material.opacity = (0.8 + 0.12 * Math.sin(this.elapsed * 0.7)) * soften;
+    // As the camera passes through, the core flares and blooms, and the shockwave leaves it.
+    const flare = flareAt(this.reveal);
+    if (this.coreMaterial) this.coreMaterial.uniforms.uBrightness.value = CORE_BRIGHTNESS * soften * (1 + 1.4 * flare);
+    if (this.coreGlow) {
+      this.coreGlow.material.opacity = (0.8 + 0.12 * Math.sin(this.elapsed * 0.7)) * soften;
+      this.coreGlow.scale.setScalar(2.8 + 14 * flare);
+    }
+    if (this.shock) {
+      const wave = shockAt(this.reveal);
+      this.shock.scale.setScalar(wave.scale);
+      this.shock.material.opacity = wave.opacity;
+    }
     if (this.flowMaterial) {
       this.flowMaterial.uniforms.uFlow.value = this.flowDistance;
       this.flowMaterial.uniforms.uStrength.value = this.flowStrength;
