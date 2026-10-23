@@ -1,12 +1,15 @@
 // GLSL for the galaxy. Written for three.js ShaderMaterial, which compiles them as GLSL ES 3.00.
 
 /**
- * How far a star has swung round the galaxy's turn, in radians. The arms sway back and forth on a slow beat.
- * The sway is bounded, so they breathe in place. A swing that kept growing would wind the arms up into rings.
+ * How far a star has swung round the galaxy's turn, in radians. The arms sway on a slow beat, and a ripple
+ * travels outward through them, so the spiral is always moving. Both terms are bounded, so the swing never
+ * accumulates: a swing that kept growing would wind the arms up into rings.
  */
 const swingGlsl = /* glsl */ `
   float swing(float radius, float time, float amount) {
-    return amount * sin(time * 0.25) / (0.7 + radius);
+    float sway = sin(time * 0.25);
+    float ripple = sin(time * 0.7 - radius * 1.5);
+    return amount * (0.6 * sway + 0.4 * ripple) / (0.7 + radius);
   }
 `;
 

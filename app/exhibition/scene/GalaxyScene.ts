@@ -38,10 +38,10 @@ const FAR_PLANE = 300;
 const PHONE_HALF_WIDTH = 4.4;
 const BASE_HOME_DISTANCE = 13;
 /**
- * How far the arms sway round, in radians at the core, and less further out. The sway swings back and forth
- * and never winds up, so the arms keep their shape however long the visitor stays.
+ * How far the arms swing round, in radians at the core, and less further out. The swing is bounded, so the
+ * arms keep their shape however long the visitor stays, but it is large enough that the spiral reads as alive.
  */
-const SWIRL = 0.22;
+const SWIRL = 0.5;
 /** The core's brightness at the overview. The dive dims it from here. */
 const CORE_BRIGHTNESS = 1.6;
 /** The glow of the spiral arms, flat in the galaxy's plane. It stays inside the ring of pictures. */
