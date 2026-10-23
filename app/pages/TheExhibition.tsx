@@ -1,5 +1,6 @@
-import { useState, useCallback, useEffect, useMemo, useRef } from "react";
+import { useState, useCallback, useEffect, useLayoutEffect, useMemo, useRef } from "react";
 import { GalaxyHero } from "../exhibition/GalaxyHero";
+import type { OpenArea } from "../exhibition/camera/framing";
 import { FocusCaption } from "../exhibition/ui/FocusCaption";
 import { GestureHint } from "../exhibition/ui/GestureHint";
 import { galleryPictures as galleryImages, pictureSrc } from "../exhibition/data/pictures";
@@ -40,6 +41,28 @@ export function TheExhibition() {
   // ── Scroll scene ──
   // The hero is a scene the page scrolls through. The stage stays pinned while the scroll moves the camera.
   const sceneRef = useRef<HTMLElement>(null);
+  const headlineRef = useRef<HTMLDivElement>(null);
+  const cueRef = useRef<HTMLDivElement>(null);
+  // The band between the headline and the scroll cue: where a portrait galaxy rests. Measured, not guessed,
+  // so a long headline on a small phone pushes the galaxy down rather than under the text.
+  const [openArea, setOpenArea] = useState<OpenArea | null>(null);
+  useLayoutEffect(() => {
+    const stage = sceneRef.current?.firstElementChild as HTMLElement | null | undefined;
+    const headline = headlineRef.current;
+    const cue = cueRef.current;
+    if (!stage || !headline || !cue) return;
+    // offsetTop is read from the layout, so the entrance and scroll transforms do not move the measure.
+    const measure = () => {
+      const dock = cue.offsetParent as HTMLElement | null;
+      setOpenArea({ top: headline.offsetTop + headline.offsetHeight, bottom: (dock?.offsetTop ?? 0) + cue.offsetTop });
+    };
+    measure();
+    const observer = new ResizeObserver(measure);
+    observer.observe(stage);
+    observer.observe(headline);
+    observer.observe(cue);
+    return () => observer.disconnect();
+  }, []);
   const reducedMotion = useReducedMotion();
   // The first visit of a session opens with the camera pulling in. Reduced motion and repeat visits skip it.
   const [intro] = useState(() => !reducedMotion && shouldPlayIntro());
@@ -153,6 +176,7 @@ export function TheExhibition() {
         <div className="sticky top-0 w-full h-[100svh] overflow-hidden">
           {/* Overlay text */}
           <motion.div
+            ref={headlineRef}
             style={{ opacity: headlineOpacity, y: headlineY }}
             className="absolute top-24 left-0 right-0 z-10 p-6 pointer-events-none"
           >
@@ -188,6 +212,7 @@ export function TheExhibition() {
               scrollProgressRef={scrollProgressRef}
               intro={intro}
               reducedMotion={reducedMotion}
+              openArea={openArea}
             />
           </div>
 
@@ -205,7 +230,8 @@ export function TheExhibition() {
 
           {/* The bottom dock: the scroll cue. Scrolling is how the visitor moves through the galaxy. */}
           <div className="absolute inset-x-0 bottom-[4%] z-30 flex flex-col items-center gap-5 pointer-events-none">
-            <motion.div style={{ opacity: cueOpacity }}>
+            {/* The cue is a handle for one-finger scrolling: a touch here scrolls the scene, as it does on any page. */}
+            <motion.div ref={cueRef} style={{ opacity: cueOpacity }} className="pointer-events-auto touch-pan-y -my-3 py-3">
               <motion.div
                 initial={{ opacity: 0 }}
                 animate={{ opacity: focusedIndex !== null ? 0 : 1 }}

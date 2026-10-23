@@ -3,6 +3,8 @@ import * as THREE from "three";
 import { GalaxyScene } from "./scene/GalaxyScene";
 import { pictureTabOrder, VIEW } from "./scene/layout";
 import { EXIT_DURATION, FOCUS_DURATION, FocusMove, fitDistance, framedPose, type Pose } from "./camera/focus";
+import { restShift, type OpenArea } from "./camera/framing";
+import { glideStep } from "./input/glide";
 
 type FlyState = "IDLE" | "FLYING_IN" | "FOCUSED" | "FLYING_OUT";
 
@@ -35,6 +37,8 @@ export interface GalaxyHeroProps {
   intro?: boolean;
   /** The visitor asked for reduced motion: no idle turn, no arcing flights, a still nebula. */
   reducedMotion?: boolean;
+  /** The band between the headline and the controls. On a portrait screen the galaxy rests in its middle. */
+  openArea?: OpenArea | null;
 }
 
 const MIN_CAMERA_DISTANCE = 5;
@@ -54,6 +58,11 @@ const TILT_MIN = (12 * Math.PI) / 180;
 const TILT_MAX = (45 * Math.PI) / 180;
 /** How far a mouse drag tilts the view, in radians per pixel. Dragging down looks down on the galaxy. */
 const TILT_PER_PIXEL = 0.0025;
+/** A tilt the visitor flicks carries on a little after the finger lifts. Radians a second at rest. */
+const TILT_REST = 0.005;
+/** Two fingers scroll the scene, and the scroll carries on after they lift. Pixels a second. */
+const SCROLL_REST = 8;
+const SCROLL_MAX = 6000;
 const PINCH_ZOOM_SENSITIVITY = 1.15;
 /** Pinch zoom in the overview is kept within this range of the scroll position's distance. */
 const MIN_ZOOM = 0.75;
@@ -111,8 +120,11 @@ export function GalaxyHero({
   scrollProgressRef,
   intro = false,
   reducedMotion = false,
+  openArea = null,
 }: GalaxyHeroProps) {
   const containerRef = useRef<HTMLDivElement>(null);
+  const openAreaRef = useRef(openArea);
+  openAreaRef.current = openArea;
   const introRef = useRef(intro);
   const reducedRef = useRef(reducedMotion);
   reducedRef.current = reducedMotion;
@@ -199,6 +211,15 @@ export function GalaxyHero({
     // How far the stars have streamed towards the visitor, and how strongly they show. Both follow the scroll.
     let flowPhase = 0;
     let flowStrength = 0;
+    // Momentum: a flicked tilt and a flicked scroll carry on after the fingers lift, and slow to rest.
+    let tiltVelocity = 0;
+    let scrollVelocity = 0;
+    let scrollFrame = 0;
+    // Two fingers: where their middle was, and how fast it moved, so the release can fling the scroll.
+    let twoFingers = false;
+    let fingersY = 0;
+    let fingersVelocity = 0;
+    let fingersTime = 0;
     const activePointers = new Map<number, { x: number; y: number }>();
     // The camera looks a little below the centre, so the galaxy sits above the controls at the foot of the page.
     const homeLook = new THREE.Vector3(0, -0.6, 0);
@@ -209,9 +230,9 @@ export function GalaxyHero({
     const setState = (next: FlyState) => {
       state = next;
       container.dataset.focusState = next === "IDLE" ? "overview" : next.toLowerCase().replace("_", "-");
-      // The page scrolls in the overview. Once a picture is in view, the galaxy takes every gesture,
-      // so a swipe is never handed to the browser to scroll the page.
-      container.style.touchAction = next === "IDLE" ? "pan-y" : "none";
+      // The galaxy takes every touch, so a finger never starts a native scroll behind it. Two fingers
+      // scroll the scene instead, as a trackpad does.
+      container.style.touchAction = "none";
     };
     setState("IDLE");
 
@@ -239,6 +260,17 @@ export function GalaxyHero({
       shiftApplied = pixels;
       galaxy.setViewShift(pixels);
     };
+
+    // Where the overview rests on this screen: a portrait galaxy sits in the middle of the open space.
+    const overviewShift = () =>
+      restShift({
+        width: container.clientWidth,
+        height: container.clientHeight,
+        openArea: openAreaRef.current,
+        fovDeg: galaxy.baseFov,
+        position: galaxy.homePosition(),
+        look: homeLook,
+      });
 
     const currentPose = (): Pose => ({
       position: galaxy.camera.position.clone(),
@@ -368,7 +400,7 @@ export function GalaxyHero({
         }
       }
 
-      // ── Rotation: horizontal drags turn the galaxy, with momentum. Vertical movement stays with the page, except a mouse drag, which tilts the view. ──
+      // ── Rotation: horizontal drags turn the galaxy, with momentum. Vertical drags tilt the view, as a mouse drag does. ──
       if (state === "IDLE" && !isDragging) {
         rotVelY = springLerp(rotVelY, spin, 1.2, dt);
         group.rotation.y += rotVelY * dt;
@@ -379,6 +411,12 @@ export function GalaxyHero({
         group.rotation.y = springLerp(group.rotation.y, recenterRotY, RECENTER_RATE, dt);
         rotVelY = 0;
       }
+      // A flicked tilt carries on, slowing to rest, and stops at its limits.
+      if (state === "IDLE" && !isDragging && tiltVelocity !== 0) {
+        const glide = glideStep(tiltVelocity, dt, TILT_REST);
+        tiltTarget = THREE.MathUtils.clamp(tiltTarget + glide.travel, TILT_MIN, TILT_MAX);
+        tiltVelocity = tiltTarget === TILT_MIN || tiltTarget === TILT_MAX ? 0 : glide.velocity;
+      }
       group.rotation.x = springLerp(group.rotation.x, 0, 6, dt);
 
       // ── The camera ──
@@ -386,7 +424,12 @@ export function GalaxyHero({
       if (introT < 1) introT = Math.min(1, introT + dt / INTRO_SECONDS);
       // The tilt and zoom ease towards the visitor's input. Reduced motion takes them at once.
       tilt = reduced ? tiltTarget : springLerp(tilt, tiltTarget, 6, dt);
+      // Recorded for the tests, and only written when the whole degree changes.
+      const degrees = String(Math.round(THREE.MathUtils.radToDeg(tilt)));
+      if (container.dataset.tilt !== degrees) container.dataset.tilt = degrees;
       zoom = reduced ? zoomTarget : springLerp(zoom, zoomTarget, 6, dt);
+      const zoomLabel = zoom.toFixed(2);
+      if (container.dataset.zoom !== zoomLabel) container.dataset.zoom = zoomLabel;
       if (state === "IDLE") {
         const pose = dollyPose();
         if (!reduced) {
@@ -397,7 +440,7 @@ export function GalaxyHero({
             .addScaledVector(UP.clone().applyQuaternion(pose.quaternion), parallax.y * PARALLAX_UP);
         }
         applyPose(pose);
-        setShift(0);
+        setShift(overviewShift());
       } else if (state === "FLYING_IN" && move && focusPicture !== null) {
         const target = focusPose(focusPicture);
         if (!target) {
@@ -405,7 +448,7 @@ export function GalaxyHero({
         } else {
           const { pose, done } = move.step(dt, target);
           applyPose(pose);
-          setShift((header / 2) * move.progress);
+          setShift(THREE.MathUtils.lerp(overviewShift(), header / 2, move.progress));
           if (done) {
             applyPose(target);
             setShift(header / 2);
@@ -423,12 +466,12 @@ export function GalaxyHero({
       } else if (state === "FLYING_OUT" && move) {
         const { pose, done } = move.step(dt, homePose());
         applyPose(pose);
-        setShift((header / 2) * (1 - move.progress));
+        setShift(THREE.MathUtils.lerp(header / 2, overviewShift(), move.progress));
         if (done) {
           focusPicture = null;
           move = null;
           delete container.dataset.focusRect;
-          setShift(0);
+          setShift(overviewShift());
           rotVelY = spin;
           setState("IDLE");
           onFlyOutCompleteRef.current?.();
@@ -472,14 +515,21 @@ export function GalaxyHero({
     galaxy.setVisited(visitedRef.current);
 
     // ── Input ──
-    // In the overview, these handlers turn the galaxy sideways, tilt it with the mouse, pinch, pick and highlight.
-    // Once a picture is focused, they zoom and pan it, and a swipe down leaves.
+    // In the overview, one finger or the mouse turns and tilts the galaxy, two fingers scroll the scene as a
+    // trackpad does, a pinch zooms, and a tap picks. Once a picture is focused, they zoom and pan it, and a
+    // swipe down leaves.
     const el = galaxy.domElement;
     el.style.cursor = "grab";
 
     const pinchDistance = () => {
       const [a, b] = Array.from(activePointers.values());
       return a && b ? Math.hypot(a.x - b.x, a.y - b.y) : 0;
+    };
+
+    // The middle of two fingers, which two-finger scrolling follows.
+    const fingersMiddle = () => {
+      const [a, b] = Array.from(activePointers.values());
+      return a && b ? (a.y + b.y) / 2 : 0;
     };
 
     const beginPinch = () => {
@@ -489,6 +539,11 @@ export function GalaxyHero({
       isDragging = false;
       dragDistance = 8;
       rotVelY = 0;
+      tiltVelocity = 0;
+      twoFingers = true;
+      fingersY = fingersMiddle();
+      fingersVelocity = 0;
+      fingersTime = performance.now();
       highlight(null);
     };
 
@@ -505,6 +560,10 @@ export function GalaxyHero({
 
     const onPointerDown = (e: PointerEvent) => {
       if (state !== "IDLE" && state !== "FOCUSED") return;
+      // A new touch stops any flick that is still carrying on.
+      cancelAnimationFrame(scrollFrame);
+      scrollVelocity = 0;
+      tiltVelocity = 0;
       try {
         el.setPointerCapture(e.pointerId);
       } catch {
@@ -526,6 +585,44 @@ export function GalaxyHero({
       highlight(null);
     };
 
+    // Two fingers in the overview scroll the scene by the distance their middle moved. The page follows the fingers.
+    const updateTwoFingerScroll = () => {
+      if (state !== "IDLE") return;
+      const now = performance.now();
+      const y = fingersMiddle();
+      const dy = y - fingersY;
+      const seconds = Math.max((now - fingersTime) / 1000, 0.008);
+      fingersVelocity = dy / seconds;
+      fingersY = y;
+      fingersTime = now;
+      window.scrollBy(0, -dy);
+    };
+
+    // When the fingers lift, the scroll carries on at the speed they were moving, if they were still moving.
+    const releaseTwoFingers = () => {
+      if (state !== "IDLE") return;
+      const moving = performance.now() - fingersTime < 90;
+      const speed = moving ? THREE.MathUtils.clamp(-fingersVelocity, -SCROLL_MAX, SCROLL_MAX) : 0;
+      scrollVelocity = Math.abs(speed) > SCROLL_REST ? speed : 0;
+      if (scrollVelocity === 0) return;
+      let last = performance.now();
+      const glide = (now: number) => {
+        const dt = Math.min(0.05, (now - last) / 1000);
+        last = now;
+        const step = glideStep(scrollVelocity, dt, SCROLL_REST);
+        scrollVelocity = step.velocity;
+        // Stop at either end of the page, so the glide never pushes past it.
+        const bottom = document.documentElement.scrollHeight - window.innerHeight;
+        if ((step.travel < 0 && window.scrollY <= 0) || (step.travel > 0 && window.scrollY >= bottom - 1)) {
+          scrollVelocity = 0;
+          return;
+        }
+        window.scrollBy(0, step.travel);
+        if (scrollVelocity !== 0) scrollFrame = requestAnimationFrame(glide);
+      };
+      scrollFrame = requestAnimationFrame(glide);
+    };
+
     const onPointerMove = (e: PointerEvent) => {
       if (state !== "IDLE" && state !== "FOCUSED") return;
       if (activePointers.has(e.pointerId)) {
@@ -533,6 +630,7 @@ export function GalaxyHero({
       }
       if (activePointers.size >= 2) {
         updatePinch();
+        updateTwoFingerScroll();
         return;
       }
       if (!isDragging || activePointers.size !== 1) return;
@@ -562,14 +660,13 @@ export function GalaxyHero({
         }
       } else {
         galaxy.group.rotation.y += dx * DRAG_RADIANS_PER_PIXEL;
-        // A mouse drag tilts the view. Touch keeps vertical movement, for the page's scroll.
-        if (e.pointerType === "mouse") {
-          tiltTarget = THREE.MathUtils.clamp(tiltTarget + dy * TILT_PER_PIXEL, TILT_MIN, TILT_MAX);
-        }
+        // Vertical movement tilts the view, for a mouse and a finger alike.
+        tiltTarget = THREE.MathUtils.clamp(tiltTarget + dy * TILT_PER_PIXEL, TILT_MIN, TILT_MAX);
         // Momentum after release comes from the speed of the last movement.
         const now = performance.now();
         const seconds = Math.max((now - lastMoveTime) / 1000, 0.008);
         rotVelY = (dx * DRAG_RADIANS_PER_PIXEL) / seconds;
+        tiltVelocity = (dy * TILT_PER_PIXEL) / seconds;
         lastMoveTime = now;
       }
       prevX = e.clientX;
@@ -579,6 +676,10 @@ export function GalaxyHero({
     const finishPointer = (e: PointerEvent, allowClick: boolean) => {
       const wasClick = allowClick && !hadMultiPointer && activePointers.size === 1 && dragDistance < 6;
       activePointers.delete(e.pointerId);
+      if (twoFingers && activePointers.size < 2) {
+        twoFingers = false;
+        releaseTwoFingers();
+      }
       try {
         el.releasePointerCapture(e.pointerId);
       } catch {
@@ -682,6 +783,7 @@ export function GalaxyHero({
       window.removeEventListener("keydown", onKeyDown);
       highlightRef.current = () => {};
       activeRef.current = null;
+      cancelAnimationFrame(scrollFrame);
       galaxy.dispose();
     };
   }, [images]);

@@ -94,11 +94,12 @@ function Glyph({ gesture, touch }: { gesture: Gesture; touch: boolean }) {
   }
 
   if (touch) {
-    // A finger swipes up the screen and back: scroll on a touch screen.
+    // Two fingers move up the screen and back together: scroll through the scene on a touch screen.
     return (
       <svg {...svgProps}>
         <path d="M 100 14 L 100 106" strokeOpacity={0.25} strokeDasharray="2 7" />
-        <motion.circle cx={100} r={11} fill="white" stroke="none" initial={{ cy: 86 }} animate={{ cy: [86, 34, 86] }} transition={{ duration: 1, ease: "easeInOut" }} />
+        <motion.circle cx={86} r={9} fill="white" stroke="none" initial={{ cy: 86 }} animate={{ cy: [86, 34, 86] }} transition={{ duration: 1, ease: "easeInOut" }} />
+        <motion.circle cx={114} r={9} fill="white" stroke="none" initial={{ cy: 86 }} animate={{ cy: [86, 34, 86] }} transition={{ duration: 1, ease: "easeInOut" }} />
       </svg>
     );
   }
