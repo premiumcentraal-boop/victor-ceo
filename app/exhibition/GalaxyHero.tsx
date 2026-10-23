@@ -46,10 +46,10 @@ const BASE_SPIN = 0.05;
 const DRAG_RADIANS_PER_PIXEL = 0.0035;
 /** The overview's tilt in radians: the home view, and the lowest and highest a mouse drag can reach. */
 const TILT_HOME = VIEW.pitch;
-const TILT_MIN = (8 * Math.PI) / 180;
-const TILT_MAX = (50 * Math.PI) / 180;
+const TILT_MIN = (12 * Math.PI) / 180;
+const TILT_MAX = (45 * Math.PI) / 180;
 /** How far a mouse drag tilts the view, in radians per pixel. Dragging down looks down on the galaxy. */
-const TILT_PER_PIXEL = 0.004;
+const TILT_PER_PIXEL = 0.0025;
 const PINCH_ZOOM_SENSITIVITY = 1.15;
 /** Pinch zoom in the overview is kept within this range of the scroll position's distance. */
 const MIN_ZOOM = 0.75;
