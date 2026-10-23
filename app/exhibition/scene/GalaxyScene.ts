@@ -35,6 +35,8 @@ const HOVER_TILT = 0.12;
 const FADE_RATE = 2.2;
 const CYAN = new THREE.Color(0x67e8f9);
 const AMBER = new THREE.Color(0xffd6aa);
+/** The scene drawing into each container. A container holds one galaxy, so a new scene replaces the old one. */
+const activeScenes = new WeakMap<HTMLElement, GalaxyScene>();
 
 export interface ScenePicture {
   index: number;
@@ -154,6 +156,8 @@ export class GalaxyScene {
   private visibilityObserver: IntersectionObserver | null = null;
 
   constructor(container: HTMLElement, images: string[], options: GalaxySceneOptions = {}) {
+    // Free the old galaxy first, so two WebGL contexts never draw into one container.
+    activeScenes.get(container)?.dispose();
     this.options = options;
     this.container = container;
     const params = new URLSearchParams(window.location.search);
@@ -166,7 +170,12 @@ export class GalaxyScene {
     this.renderer.setClearColor(0x010101, 1);
     this.domElement = this.renderer.domElement;
     this.domElement.style.display = "block";
+    // Backstop: no other canvas may stay in the container beside this one.
+    for (const child of Array.from(container.children)) {
+      if (child instanceof HTMLCanvasElement && child !== this.domElement) container.removeChild(child);
+    }
     container.appendChild(this.domElement);
+    activeScenes.set(container, this);
 
     this.camera = new THREE.PerspectiveCamera(FOV_LANDSCAPE, 1, 0.1, 100);
     this.scene.add(this.group);
@@ -374,6 +383,7 @@ export class GalaxyScene {
     if (this.disposed) return;
     this.stop();
     this.disposed = true;
+    if (activeScenes.get(this.container) === this) activeScenes.delete(this.container);
     this.resizeObserver?.disconnect();
     this.visibilityObserver?.disconnect();
     document.removeEventListener("visibilitychange", this.updateRunning);
