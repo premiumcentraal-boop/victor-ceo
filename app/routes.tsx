@@ -27,16 +27,8 @@ export const router = createBrowserRouter([
         lazy: async () => ({ Component: (await import("./pages/PreRelease")).PreRelease }),
       },
       {
-        path: "radar",
-        lazy: async () => ({ Component: (await import("./pages/Radar")).Radar }),
-      },
-      {
-        path: "watchlist",
-        lazy: async () => ({ Component: (await import("./pages/Watchlist")).Watchlist }),
-      },
-      {
         path: "execution",
-        element: <Navigate to="/watchlist" replace />,
+        element: <Navigate to="/" replace />,
       },
       {
         path: "*",
