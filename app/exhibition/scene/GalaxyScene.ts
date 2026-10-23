@@ -42,6 +42,8 @@ const BASE_HOME_DISTANCE = 13;
  * and never winds up, so the arms keep their shape however long the visitor stays.
  */
 const SWIRL = 0.22;
+/** The core's brightness at the overview. The dive dims it from here. */
+const CORE_BRIGHTNESS = 1.6;
 /** The glow of the spiral arms, flat in the galaxy's plane. It stays inside the ring of pictures. */
 const HAZE_RADIUS = GALAXY.outerRadius * 1.1;
 const MAX_HOME_DISTANCE = 22;
@@ -150,6 +152,9 @@ export class GalaxyScene {
   private haze: THREE.Mesh<THREE.PlaneGeometry, THREE.ShaderMaterial> | null = null;
   private coreGlow: THREE.Sprite | null = null;
   private flowMaterial: THREE.ShaderMaterial | null = null;
+  private coreMaterial: THREE.ShaderMaterial | null = null;
+  /** How far the camera has dived into the core, 0 to 1. The core softens as the camera nears, so it glows rather than whites out. */
+  private coreTravel = 0;
   private flowDistance = 0;
   private flowStrength = 0;
   private readonly nebula: NebulaPass;
@@ -258,6 +263,11 @@ export class GalaxyScene {
   setFlow(distance: number, strength: number): void {
     this.flowDistance = distance;
     this.flowStrength = strength;
+  }
+
+  /** Sets how far the camera has dived into the core. The core dims and softens as it closes in, so it glows. */
+  setCoreTravel(travel: number): void {
+    this.coreTravel = travel;
   }
 
   /**
@@ -492,17 +502,18 @@ export class GalaxyScene {
 
   private buildGalaxy(): void {
     const layerOrder: GalaxyLayer[] = ["dust", "stars", "core"];
-    const brightness: Record<GalaxyLayer, number> = { dust: 0.9, stars: 1.5, core: 1.6 };
+    const brightness: Record<GalaxyLayer, number> = { dust: 0.9, stars: 1.5, core: CORE_BRIGHTNESS };
     const scale: Record<GalaxyLayer, number> = { dust: 2.2, stars: 2.8, core: 3.4 };
 
     for (const name of layerOrder) {
-      this.addPoints(
+      const points = this.addPoints(
         this.group,
         galaxyLayerPoints(name),
         pointVertex,
         { uScale: scale[name], uBrightness: brightness[name], uSwirl: SWIRL },
         GALAXY_LAYERS[name].count
       );
+      if (name === "core") this.coreMaterial = points.material as THREE.ShaderMaterial;
     }
 
     this.buildHaze();
@@ -843,7 +854,10 @@ export class GalaxyScene {
     }
     this.nebula.uniforms.uTime.value = this.elapsed;
     if (this.haze) this.haze.material.uniforms.uTime.value = this.elapsed;
-    if (this.coreGlow) this.coreGlow.material.opacity = 0.8 + 0.12 * Math.sin(this.elapsed * 0.7);
+    // Close to the core, the core dims by up to half, so the dive ends in a glow rather than a white-out.
+    const soften = 1 - 0.5 * this.coreTravel;
+    if (this.coreMaterial) this.coreMaterial.uniforms.uBrightness.value = CORE_BRIGHTNESS * soften;
+    if (this.coreGlow) this.coreGlow.material.opacity = (0.8 + 0.12 * Math.sin(this.elapsed * 0.7)) * soften;
     if (this.flowMaterial) {
       this.flowMaterial.uniforms.uFlow.value = this.flowDistance;
       this.flowMaterial.uniforms.uStrength.value = this.flowStrength;
