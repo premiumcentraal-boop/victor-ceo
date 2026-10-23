@@ -191,10 +191,10 @@ export class GalaxyScene {
     return this.homeDistance;
   }
 
-  /** The camera's home position, on the screen's framing distance. */
-  homePosition(): THREE.Vector3 {
+  /** The camera's home position, on the screen's framing distance. A pitch lifts or lowers the camera. */
+  homePosition(pitch?: number): THREE.Vector3 {
     const d = this.homeDistance;
-    const [x, y, z] = homeDirection();
+    const [x, y, z] = homeDirection(pitch);
     return new THREE.Vector3(x * d, y * d, z * d);
   }
 
