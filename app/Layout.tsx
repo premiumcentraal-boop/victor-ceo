@@ -1,7 +1,7 @@
 import React, { useLayoutEffect, useRef, useState } from "react";
 import { Outlet, Link, useLocation } from "react-router";
 import { motion, AnimatePresence } from "motion/react";
-import { Menu, X, Clock, Paintbrush, Radar, Bookmark } from "lucide-react";
+import { Menu, X, Clock, Paintbrush } from "lucide-react";
 import { BackgroundEffect } from "./components/BackgroundEffect";
 
 export function Layout() {
@@ -48,20 +48,11 @@ export function Layout() {
           </Link>
 
           <div className="hidden xl:flex gap-4">
-            <Link to="/radar" className="px-5 py-2 rounded-full border border-white/10 bg-white/5 backdrop-blur-md text-xs font-mono text-white/70 hover:text-white hover:bg-white/10 hover:border-white/20 transition-all flex items-center gap-2 tracking-widest uppercase shadow-[0_4px_14px_rgba(0,0,0,0.1)]">
-              <Radar size={12} className="text-cyan-400/40" /> RADAR
-            </Link>
-            <Link to="/watchlist" className="px-5 py-2 rounded-full border border-white/10 bg-white/5 backdrop-blur-md text-xs font-mono text-white/70 hover:text-white hover:bg-white/10 hover:border-white/20 transition-all flex items-center gap-2 tracking-widest uppercase shadow-[0_4px_14px_rgba(0,0,0,0.1)]">
-              <Bookmark size={12} className="text-cyan-400/40" /> WATCHLIST
-            </Link>
             <Link to="/" aria-current={onExhibition ? "page" : undefined} className={`px-5 py-2 rounded-full border bg-white/5 backdrop-blur-md text-xs font-mono hover:text-white hover:bg-white/10 hover:border-white/20 transition-all flex items-center gap-2 tracking-widest uppercase shadow-[0_4px_14px_rgba(0,0,0,0.1)] ${onExhibition ? "border-white/30 text-white" : "border-white/10 text-white/70"}`}>
               <Paintbrush size={12} className="text-cyan-400" /> THE EXHIBITION
             </Link>
             <Link to="/pre-release" className="px-5 py-2 rounded-full border border-white/10 bg-white/5 backdrop-blur-md text-xs font-mono text-white/70 hover:text-white hover:bg-white/10 hover:border-white/20 transition-all flex items-center gap-2 tracking-widest uppercase shadow-[0_4px_14px_rgba(0,0,0,0.1)]">
               <Clock size={12} className="text-orange-500" /> PRE-RELEASE
-            </Link>
-            <Link to="/lab" className="px-5 py-2 rounded-full border border-white/10 bg-white/5 backdrop-blur-md text-xs font-mono text-white/70 hover:text-white hover:bg-white/10 hover:border-white/20 transition-all flex items-center gap-2 tracking-widest uppercase shadow-[0_4px_14px_rgba(0,0,0,0.1)]">
-              <span className="text-cyan-400/40">{"<"}</span> BACK TO LAB
             </Link>
           </div>
 
@@ -103,20 +94,11 @@ export function Layout() {
                 </button>
               </div>
               <div className="flex flex-col gap-4">
-                <Link to="/radar" onClick={() => setIsMenuOpen(false)} className="w-full px-5 py-3 rounded-xl border border-white/10 bg-white/5 text-xs font-mono text-white/70 hover:text-white hover:bg-white/10 transition-all flex items-center gap-3 tracking-widest uppercase text-left">
-                  <Radar size={14} className="text-cyan-400/40 shrink-0" /> RADAR
-                </Link>
-                <Link to="/watchlist" onClick={() => setIsMenuOpen(false)} className="w-full px-5 py-3 rounded-xl border border-white/10 bg-white/5 text-xs font-mono text-white/70 hover:text-white hover:bg-white/10 transition-all flex items-center gap-3 tracking-widest uppercase text-left">
-                  <Bookmark size={14} className="text-cyan-400/40 shrink-0" /> WATCHLIST
-                </Link>
                 <Link to="/" onClick={() => setIsMenuOpen(false)} aria-current={onExhibition ? "page" : undefined} className="w-full px-5 py-3 rounded-xl border border-white/10 bg-white/5 text-xs font-mono text-white hover:bg-white/10 transition-all flex items-center gap-3 tracking-widest uppercase text-left">
                   <Paintbrush size={14} className="text-cyan-400 shrink-0" /> THE EXHIBITION
                 </Link>
                 <Link to="/pre-release" onClick={() => setIsMenuOpen(false)} className="w-full px-5 py-3 rounded-xl border border-white/10 bg-white/5 text-xs font-mono text-white hover:bg-white/10 transition-all flex items-center gap-3 tracking-widest uppercase text-left">
                   <Clock size={14} className="text-orange-500" /> PRE-RELEASE
-                </Link>
-                <Link to="/lab" onClick={() => setIsMenuOpen(false)} className="w-full px-5 py-3 rounded-xl border border-white/10 bg-white/5 text-xs font-mono text-white/70 hover:text-white hover:bg-white/10 transition-all flex items-center gap-3 tracking-widest uppercase text-left">
-                  <span className="text-cyan-400/40">{"<"}</span> BACK TO LAB
                 </Link>
               </div>
             </motion.div>
