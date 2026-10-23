@@ -25,6 +25,13 @@ describe("homeDirection", () => {
     const [x, y, z] = homeDirection();
     expect(Math.hypot(x, y, z)).toBeCloseTo(1, 10);
   });
+
+  it.each([8, 24, 50])("is a unit vector at %i degrees, and its height is the sine of the elevation", (degrees) => {
+    const pitch = (degrees * Math.PI) / 180;
+    const [x, y, z] = homeDirection(pitch);
+    expect(Math.hypot(x, y, z)).toBeCloseTo(1, 10);
+    expect(y).toBeCloseTo(Math.sin(pitch), 10);
+  });
 });
 
 describe("galaxyLayerPoints", () => {

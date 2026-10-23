@@ -20,12 +20,12 @@ export const VIEW = {
   azimuth: -Math.PI / 4,
 } as const;
 
-/** The unit direction from the centre to the camera's home position. */
-export function homeDirection(): [number, number, number] {
+/** The unit direction from the centre to the camera's home position, at the given elevation. */
+export function homeDirection(pitch = VIEW.pitch): [number, number, number] {
   return [
-    Math.sin(VIEW.azimuth) * Math.cos(VIEW.pitch),
-    Math.sin(VIEW.pitch),
-    Math.cos(VIEW.azimuth) * Math.cos(VIEW.pitch),
+    Math.sin(VIEW.azimuth) * Math.cos(pitch),
+    Math.sin(pitch),
+    Math.cos(VIEW.azimuth) * Math.cos(pitch),
   ];
 }
 
