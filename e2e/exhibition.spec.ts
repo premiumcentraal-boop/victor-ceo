@@ -32,7 +32,7 @@ test.describe("the galaxy", () => {
     await expect(caption(page)).toHaveCount(0);
   });
 
-  test("a piece shows no written instructions, and the three gestures show once per session", async ({ page }) => {
+  test("a piece shows no written instructions, and the two finger gestures show once per session", async ({ page }) => {
     await page.goto("/");
     await expect(page.getByRole("button", { name: /Enter the galaxy|Back to overview/i })).toHaveCount(0);
     await openFirstPieceFromList(page);
