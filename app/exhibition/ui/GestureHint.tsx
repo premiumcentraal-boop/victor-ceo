@@ -18,8 +18,11 @@ const HINT_SCRIM = "radial-gradient(ellipse at center, rgba(1,1,1,0.34) 0%, rgba
 const SETTLE_FRAMES = 4;
 const SMOOTH_FRAME_MS = 40;
 const SETTLE_CAP_MS = 1500;
-/** The most one frame may move the hand on. A slow frame then pauses the glide for a moment instead of skipping it. */
-const MAX_STEP_MS = 34;
+/**
+ * The most one frame may move the hand on. Ordinary frames, even slow ones, keep real time; a stall pauses the glide
+ * for a moment instead of skipping part of it.
+ */
+const MAX_STEP_MS = 100;
 
 type Phase = "settling" | "playing" | "done";
 
