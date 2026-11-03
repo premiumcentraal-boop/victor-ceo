@@ -214,14 +214,14 @@ export const hazeFragment = /* glsl */ `
     // The same sway as the stars, so the glow and the stars move as one galaxy.
     float turn = swing(r, uTime, uSwirl);
     float phase = uArms * (theta + turn - uWinding * log(max(r, uInner) / uInner));
-    // Sharp arms over a faint disc, so the spiral reads as arms, not as a ring.
-    float arms = pow(0.5 + 0.5 * cos(phase), 6.0);
+    // Soft arms over a faint disc: the spiral reads as a turning galaxy, not as three ribbons, and not as a ring.
+    float arms = pow(0.5 + 0.5 * cos(phase), 3.0);
     float dust = 0.55 + 0.9 * fbm(w * 0.9);
     float bulge = exp(-r * r / 0.9);
-    float edge = 1.0 - smoothstep(uOuter * 0.45, uOuter, r);
+    float edge = 1.0 - smoothstep(uOuter * 0.3, uOuter, r);
     vec3 armColor = mix(vec3(0.12, 0.42, 1.0), vec3(0.6, 0.25, 1.0), smoothstep(0.9, 3.2, r));
     vec3 coreColor = vec3(1.0, 0.8, 0.55);
-    vec3 col = mix(armColor, coreColor, bulge) * (arms * dust * 1.3 + 0.12 * dust + bulge * 0.6) * edge * uIntensity;
+    vec3 col = mix(armColor, coreColor, bulge) * (arms * dust * 0.9 + 0.08 * dust + bulge * 0.6) * edge * uIntensity;
     gl_FragColor = vec4(col, 1.0);
   }
 `;

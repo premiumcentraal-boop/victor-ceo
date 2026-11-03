@@ -37,6 +37,8 @@ export const GALAXY = {
   outerRadius: 3.6,
   /** Radians of winding per e-fold of radius. Larger values wind the arms more tightly. */
   winding: 2.1,
+  /** How far the loose field of small stars reaches, past the ring of pictures, so the galaxy has no hard edge. */
+  fieldRadius: 9.8,
 } as const;
 
 /**
@@ -63,12 +65,19 @@ function smoothstep(edge0: number, edge1: number, x: number): number {
   return t * t * (3 - 2 * t);
 }
 
-export type GalaxyLayer = "dust" | "stars" | "core";
+export type GalaxyLayer = "field" | "dust" | "stars" | "core";
 
 interface LayerSpec {
   count: number;
   inner: number;
   outer: number;
+  /**
+   * How the layer's stars thin out with radius. "even" spreads them from inner to outer; "exponential" packs them
+   * towards the centre and lets a long tail run out to the edge, the way a real disc fades.
+   */
+  falloff: "even" | "exponential";
+  /** The share of the layer's stars that ignore the arms and sit anywhere round the disc. */
+  loose: number;
   /** Lateral spread of the arms, in world units. */
   scatter: number;
   /** How far the layer spreads above and below the galaxy's plane. */
@@ -78,10 +87,16 @@ interface LayerSpec {
 }
 
 export const GALAXY_LAYERS: Record<GalaxyLayer, LayerSpec> = {
-  dust: { count: 14000, inner: 0.4, outer: GALAXY.outerRadius * 0.95, scatter: 0.34, thickness: 0.3, size: [0.6, 1.2], seed: 11 },
-  stars: { count: 9000, inner: 0.35, outer: GALAXY.outerRadius, scatter: 0.13, thickness: 0.14, size: [0.9, 1.9], seed: 23 },
-  core: { count: 2500, inner: 0.15, outer: 1.3, scatter: 0.8, thickness: 0.22, size: [1.6, 3.0], seed: 37 },
+  // Small, faint stars in a wide disc. Most of them sit anywhere round the centre, so past the arms the galaxy
+  // dissolves into a loose field of stars instead of stopping at an edge.
+  field: { count: 18000, inner: 0.6, outer: GALAXY.fieldRadius, falloff: "exponential", loose: 0.75, scatter: 0.9, thickness: 0.18, size: [0.5, 1.15], seed: 5 },
+  dust: { count: 14000, inner: 0.4, outer: GALAXY.outerRadius * 1.25, falloff: "even", loose: 0.25, scatter: 0.55, thickness: 0.3, size: [0.6, 1.2], seed: 11 },
+  stars: { count: 9000, inner: 0.35, outer: GALAXY.outerRadius * 1.1, falloff: "even", loose: 0.22, scatter: 0.26, thickness: 0.14, size: [0.9, 1.9], seed: 23 },
+  core: { count: 2500, inner: 0.15, outer: 1.3, falloff: "even", loose: 0, scatter: 0.8, thickness: 0.22, size: [1.6, 3.0], seed: 37 },
 };
+
+/** How quickly the field thins out: its stars fall off by e for every this many world units of radius. */
+const FIELD_SCALE = 3.6;
 
 export interface LayerPoints {
   positions: Float32Array;
@@ -108,13 +123,17 @@ export function galaxyLayerPoints(layer: GalaxyLayer): LayerPoints {
   const sizes = new Float32Array(spec.count);
   const seeds = new Float32Array(spec.count);
 
+  const span = spec.outer - spec.inner;
+  // The largest exponential draw that still lands inside the layer, so no star needs to be thrown away.
+  const tail = 1 - Math.exp(-span / FIELD_SCALE);
   for (let i = 0; i < spec.count; i++) {
-    const t = Math.pow(random(), 1.35);
-    const radius = spec.inner + (spec.outer - spec.inner) * t;
+    const t = spec.falloff === "exponential" ? -FIELD_SCALE * Math.log(1 - random() * tail) / span : Math.pow(random(), 1.35);
+    const radius = spec.inner + span * t;
     const arm = Math.floor(random() * GALAXY.arms);
-    // Constant lateral spread: an angular offset that shrinks with radius.
-    const angle = armAngle(arm, radius) + (gaussian(random) * spec.scatter) / radius;
-    const height = gaussian(random) * spec.thickness;
+    // Constant lateral spread: an angular offset that shrinks with radius. Loose stars belong to no arm.
+    const angle = random() < spec.loose ? random() * TAU : armAngle(arm, radius) + (gaussian(random) * spec.scatter) / radius;
+    // Past the bright disc it flares a little, as a real one does.
+    const height = gaussian(random) * spec.thickness * (1 + 0.35 * Math.max(0, radius / GALAXY.outerRadius - 1));
 
     positions[i * 3] = radius * Math.cos(angle);
     positions[i * 3 + 1] = height;
@@ -123,7 +142,9 @@ export function galaxyLayerPoints(layer: GalaxyLayer): LayerPoints {
     const depth = radius / GALAXY.outerRadius;
     const outer = smoothstep(0.2, 0.85, depth);
     const base = layer === "core" ? WARM : mix(WARM, COOL, outer);
-    const tinted = layer === "dust" ? mix(DEEP, VIOLET, smoothstep(0.45, 0.95, depth)) : base;
+    // The field is mostly the cool white of far stars, deepening towards its edge, with a few warm ones among them.
+    const tinted =
+      layer === "dust" ? mix(DEEP, VIOLET, smoothstep(0.45, 0.95, depth)) : layer === "field" ? (random() < 0.12 ? WARM : mix(COOL, DEEP, smoothstep(1, 2.5, depth) * 0.5)) : base;
     const jitter = (random() - 0.5) * 0.12;
     colors[i * 3] = tinted[0] + jitter;
     colors[i * 3 + 1] = tinted[1] + jitter;

@@ -45,8 +45,8 @@ const BASE_HOME_DISTANCE = 13;
 const SWIRL = 0.5;
 /** The core's brightness at the overview. The dive dims it from here. */
 const CORE_BRIGHTNESS = 1.6;
-/** The glow of the spiral arms, flat in the galaxy's plane. It stays inside the ring of pictures. */
-const HAZE_RADIUS = GALAXY.outerRadius * 1.1;
+/** The glow of the spiral arms, flat in the galaxy's plane. It fades out round the ring of pictures. */
+const HAZE_RADIUS = GALAXY.outerRadius * 1.3;
 const MAX_HOME_DISTANCE = 22;
 
 export const PICTURE_WIDTH = 1.35;
@@ -533,9 +533,9 @@ export class GalaxyScene {
   }
 
   private buildGalaxy(): void {
-    const layerOrder: GalaxyLayer[] = ["dust", "stars", "core"];
-    const brightness: Record<GalaxyLayer, number> = { dust: 0.9, stars: 1.5, core: CORE_BRIGHTNESS };
-    const scale: Record<GalaxyLayer, number> = { dust: 2.2, stars: 2.8, core: 3.4 };
+    const layerOrder: GalaxyLayer[] = ["field", "dust", "stars", "core"];
+    const brightness: Record<GalaxyLayer, number> = { field: 1.15, dust: 0.9, stars: 1.5, core: CORE_BRIGHTNESS };
+    const scale: Record<GalaxyLayer, number> = { field: 2.0, dust: 2.2, stars: 2.8, core: 3.4 };
 
     for (const name of layerOrder) {
       const points = this.addPoints(

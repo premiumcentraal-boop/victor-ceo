@@ -46,12 +46,26 @@ describe("galaxyLayerPoints", () => {
     expect(second.positions).toEqual(first.positions);
   });
 
-  it.each(Object.keys(GALAXY_LAYERS) as (keyof typeof GALAXY_LAYERS)[])("%s stays within the galaxy's disc", (layer) => {
+  it.each(Object.keys(GALAXY_LAYERS) as (keyof typeof GALAXY_LAYERS)[])("%s stays within its own reach", (layer) => {
     const { positions } = galaxyLayerPoints(layer);
     for (let i = 0; i < positions.length; i += 3) {
       const reach = Math.hypot(positions[i], positions[i + 2]);
-      expect(reach).toBeLessThanOrEqual(GALAXY.outerRadius);
+      expect(reach).toBeLessThanOrEqual(GALAXY_LAYERS[layer].outer + 1e-6);
     }
+  });
+
+  it("only the loose field reaches past the ring of pictures, and it reaches well past it", () => {
+    for (const layer of Object.keys(GALAXY_LAYERS) as (keyof typeof GALAXY_LAYERS)[]) {
+      if (layer === "field") continue;
+      expect(GALAXY_LAYERS[layer].outer).toBeLessThan(ORBIT.radius);
+    }
+    const { positions } = galaxyLayerPoints("field");
+    let beyond = 0;
+    for (let i = 0; i < positions.length; i += 3) {
+      if (Math.hypot(positions[i], positions[i + 2]) > ORBIT.radius) beyond++;
+    }
+    // A real share of the field lies out past the pictures, so the galaxy fades into space instead of ending.
+    expect(beyond / (positions.length / 3)).toBeGreaterThan(0.15);
   });
 
   it("is a flat spiral, not a ball: almost every point lies close to the galaxy's plane", () => {
