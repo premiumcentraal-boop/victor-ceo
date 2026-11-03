@@ -1,7 +1,7 @@
 import React, { useLayoutEffect, useRef, useState } from "react";
 import { Outlet, Link, useLocation } from "react-router";
 import { motion, AnimatePresence } from "motion/react";
-import { Menu, X, Clock, Paintbrush } from "lucide-react";
+import { Menu, X, Clock, Paintbrush, Globe } from "lucide-react";
 import { BackgroundEffect } from "./components/BackgroundEffect";
 
 export function Layout() {
@@ -10,6 +10,7 @@ export function Layout() {
   const { pathname } = useLocation();
   // The exhibition lives at "/", so the exhibition tab is current on the homepage.
   const onExhibition = pathname === "/";
+  const onMeridian = pathname.startsWith("/meridian");
 
   // Publish the header's real height, so the hero always starts underneath it at every width.
   useLayoutEffect(() => {
@@ -30,7 +31,7 @@ export function Layout() {
   return (
     <div className="min-h-screen bg-[#010101] text-white font-sans overflow-x-clip selection:bg-cyan-500/30 flex flex-col relative">
       {/* The homepage draws its own nebula, so the 2D background only runs on the other pages. */}
-      {pathname !== "/" && <BackgroundEffect />}
+      {pathname !== "/" && !onMeridian && <BackgroundEffect />}
 
       {/* Top Navigation / App Title */}
       <header
@@ -53,6 +54,9 @@ export function Layout() {
             </Link>
             <Link to="/pre-release" className="px-5 py-2 rounded-full border border-white/10 bg-white/5 backdrop-blur-md text-xs font-mono text-white/70 hover:text-white hover:bg-white/10 hover:border-white/20 transition-all flex items-center gap-2 tracking-widest uppercase shadow-[0_4px_14px_rgba(0,0,0,0.1)]">
               <Clock size={12} className="text-orange-500" /> PRE-RELEASE
+            </Link>
+            <Link to="/meridian" aria-current={onMeridian ? "page" : undefined} className={`px-5 py-2 rounded-full border bg-white/5 backdrop-blur-md text-xs font-mono hover:text-white hover:bg-white/10 hover:border-white/20 transition-all flex items-center gap-2 tracking-widest uppercase shadow-[0_4px_14px_rgba(0,0,0,0.1)] ${onMeridian ? "border-white/30 text-white" : "border-white/10 text-white/70"}`}>
+              <Globe size={12} className="text-cyan-400" /> MERIDIAN
             </Link>
           </div>
 
@@ -99,6 +103,9 @@ export function Layout() {
                 </Link>
                 <Link to="/pre-release" onClick={() => setIsMenuOpen(false)} className="w-full px-5 py-3 rounded-xl border border-white/10 bg-white/5 text-xs font-mono text-white hover:bg-white/10 transition-all flex items-center gap-3 tracking-widest uppercase text-left">
                   <Clock size={14} className="text-orange-500" /> PRE-RELEASE
+                </Link>
+                <Link to="/meridian" onClick={() => setIsMenuOpen(false)} aria-current={onMeridian ? "page" : undefined} className={`w-full px-5 py-3 rounded-xl border bg-white/5 text-xs font-mono hover:bg-white/10 transition-all flex items-center gap-3 tracking-widest uppercase text-left ${onMeridian ? "border-white/30 text-white" : "border-white/10 text-white"}`}>
+                  <Globe size={14} className="text-cyan-400 shrink-0" /> MERIDIAN
                 </Link>
               </div>
             </motion.div>

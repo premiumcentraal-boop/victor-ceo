@@ -31,6 +31,11 @@ export const router = createBrowserRouter([
         element: <Navigate to="/" replace />,
       },
       {
+        // Meridian, a separate app on its own subdomain, framed under the site's header.
+        path: "meridian",
+        lazy: async () => ({ Component: (await import("./pages/Meridian")).Meridian }),
+      },
+      {
         path: "*",
         element: <Navigate to="/" replace />,
       },
