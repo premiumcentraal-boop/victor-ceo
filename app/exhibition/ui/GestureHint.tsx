@@ -23,6 +23,11 @@ const SETTLE_CAP_MS = 1500;
  * for a moment instead of skipping part of it.
  */
 const MAX_STEP_MS = 100;
+/**
+ * However slow the frames, the glide never falls further behind the clock than this, so on a struggling device the
+ * hint still finishes in good time instead of lingering over the work.
+ */
+const SLOWEST_GLIDE = 1.5;
 
 type Phase = "settling" | "playing" | "done";
 
@@ -89,8 +94,10 @@ export function GestureHint() {
 function useGestureProgress(onSettling: () => void): MotionValue<number> {
   const progress = useMotionValue(0);
   const settling = useRef(false);
-  useAnimationFrame((_, delta) => {
-    const next = Math.min(1, progress.get() + Math.min(delta, MAX_STEP_MS) / GESTURE_MS);
+  useAnimationFrame((elapsed, delta) => {
+    const stepped = progress.get() + Math.min(delta, MAX_STEP_MS) / GESTURE_MS;
+    const floor = elapsed / (GESTURE_MS * SLOWEST_GLIDE);
+    const next = Math.min(1, Math.max(stepped, floor));
     progress.set(next);
     if (!settling.current && next >= (GESTURE_MS - FADE_MS) / GESTURE_MS) {
       settling.current = true;
