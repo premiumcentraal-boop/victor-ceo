@@ -14,6 +14,8 @@ export const UNIVERSE = {
   domeRadius: 200,
   /** How many distant galaxies are scattered over the sky. */
   galaxies: 28,
+  /** How many brighter nebula clouds are spread round the sky. */
+  nebulae: 6,
   /** The sky turns on its own, very slowly, so it is never quite still: radians a second. */
   driftRate: 0.0035,
   /** How long the sky takes to fade in once it is drawn, in seconds. */
@@ -96,14 +98,20 @@ export function bandNormal(): Vec3 {
 }
 
 /**
- * Where the three nebula clouds sit: one just off the home view, behind the galaxy, one across the sky, and one
- * overhead, so turning and tilting always brings one into view.
+ * Where the nebula clouds sit: the first just off the home view, behind the galaxy, and the rest spread evenly round
+ * the sphere from there, above, below and behind, so wherever the visitor turns or tilts, one is in view.
  */
 export function nebulaCentres(): Vec3[] {
   const view = homeViewDirection();
-  return [
-    unit([view[0] + 0.35, view[1] + 0.25, view[2] - 0.2]),
-    unit([-view[0] + 0.3, 0.15, -view[2] - 0.4]),
-    unit([0.25, 1, -0.3]),
-  ];
+  const centres: Vec3[] = [unit([view[0] + 0.35, view[1] + 0.25, view[2] - 0.2])];
+  // The others on a spiral over the sphere (a Fibonacci lattice), the most even spread for a few points.
+  const others = UNIVERSE.nebulae - 1;
+  const golden = Math.PI * (3 - Math.sqrt(5));
+  for (let i = 0; i < others; i++) {
+    const y = 1 - (2 * (i + 0.5)) / others;
+    const across = Math.sqrt(1 - y * y);
+    const azimuth = 0.9 + i * golden;
+    centres.push(unit([across * Math.cos(azimuth), y, across * Math.sin(azimuth)]));
+  }
+  return centres;
 }

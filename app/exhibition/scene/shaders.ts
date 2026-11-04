@@ -193,6 +193,8 @@ export const hazeFragment = /* glsl */ `
 
 /** How many distant galaxies the far universe draws. Kept in step with UNIVERSE.galaxies. */
 export const FAR_GALAXIES = 28;
+/** How many nebula clouds the far universe draws. Kept in step with UNIVERSE.nebulae. */
+export const FAR_NEBULAE = 6;
 
 /** A unit sphere round the cube camera: each fragment's direction is the direction it paints in the sky. */
 export const universeVertex = /* glsl */ `
@@ -205,13 +207,14 @@ export const universeVertex = /* glsl */ `
 `;
 
 /**
- * The far universe, painted once into a cube texture: a faint band of the sky with dark dust lanes through it,
- * three nebula clouds, stars of every brightness (densest in the band), and small distant galaxies. Everything is
- * a function of direction alone, so the sky is seamless all the way round.
+ * The far universe, painted once into a cube texture: a soft glow of gas and dust over the whole sky, a band like
+ * the Milky Way with dark dust lanes through it, six brighter nebula clouds, stars too far to resolve (thickest in
+ * the band) and small distant galaxies. Everything is a function of direction alone, so the sky is seamless all
+ * the way round, with no bare patch and no seam.
  */
 export const universeFragment = /* glsl */ `
   uniform vec3 uBandNormal;
-  uniform vec3 uNebula[3];
+  uniform vec3 uNebula[${FAR_NEBULAE}];
   uniform vec4 uGalaxies[${FAR_GALAXIES}];
   uniform vec4 uShapes[${FAR_GALAXIES}];
   varying vec3 vDir;
@@ -269,6 +272,19 @@ export const universeFragment = /* glsl */ `
   void main() {
     vec3 d = normalize(vDir);
 
+    // The glow over the whole sky: warped clouds of gas and dust in every direction, deep blue and teal, violet in
+    // places and a warm, dusty brown in others, so the dark between the stars is never bare. Its lowest point is a
+    // faint blue, its highest a soft glow; the real dark is left to the dust lanes.
+    vec3 warp = vec3(fbm3(d * 1.5 + 3.0), fbm3(d * 1.5 + 7.3), fbm3(d * 1.5 + 13.1));
+    float gas = fbm3(d * 2.1 + 1.9 * warp);
+    float wisps = fbm3(d * 5.3 + 3.2 * warp);
+    vec3 tint = mix(vec3(0.05, 0.08, 0.19), vec3(0.17, 0.07, 0.24), smoothstep(0.38, 0.66, warp.x));
+    tint = mix(tint, vec3(0.03, 0.17, 0.21), smoothstep(0.42, 0.7, warp.y));
+    tint = mix(tint, vec3(0.22, 0.12, 0.08), 0.6 * smoothstep(0.55, 0.8, warp.z));
+    // A fifth of the colour gives way to a cool grey, so the glow reads as distant light, not as paint.
+    tint = mix(tint, vec3(dot(tint, vec3(0.33))) * vec3(0.9, 0.95, 1.15), 0.2);
+    vec3 col = tint * (0.16 + 0.7 * pow(gas, 1.7)) * (0.75 + 0.5 * wisps);
+
     // The band: a soft lane of light across the sky, brighter and warmer at its heart, broken by dust.
     float lat = dot(d, uBandNormal);
     float band = exp(-lat * lat / 0.026);
@@ -276,25 +292,31 @@ export const universeFragment = /* glsl */ `
     float cloud = fbm3(d * 3.2);
     float lanes = smoothstep(0.42, 0.7, fbm3(d * 7.0 + 11.0));
     vec3 bandColour = mix(vec3(0.16, 0.2, 0.34), vec3(0.5, 0.42, 0.36), band);
-    vec3 col = bandColour * (0.07 * wide + 0.55 * band * cloud) * (1.0 - 0.8 * lanes * band);
+    col += bandColour * (0.07 * wide + 0.55 * band * cloud);
+    // Dust lanes darken the band and the glow behind it, as dust does in front of a real one.
+    col *= 1.0 - 0.75 * lanes * band;
 
-    // Three nebula clouds in the site's teal, violet and rose, their shapes warped so they read as gas.
-    vec3 hues[3];
+    // Six brighter nebula clouds round the sky, in the site's teal, violet and rose and the deep blue and soft red
+    // of real ones, their shapes warped so they read as gas.
+    vec3 hues[${FAR_NEBULAE}];
     hues[0] = vec3(0.05, 0.32, 0.4);
     hues[1] = vec3(0.32, 0.1, 0.5);
     hues[2] = vec3(0.45, 0.12, 0.26);
-    for (int i = 0; i < 3; i++) {
+    hues[3] = vec3(0.08, 0.16, 0.42);
+    hues[4] = vec3(0.42, 0.14, 0.16);
+    hues[5] = vec3(0.1, 0.3, 0.32);
+    for (int i = 0; i < ${FAR_NEBULAE}; i++) {
       float near = dot(d, uNebula[i]);
-      if (near < 0.55) continue;
-      float reach = smoothstep(0.55, 1.0, near);
+      if (near < 0.3) continue;
+      float reach = smoothstep(0.3, 1.0, near);
       vec3 q = vec3(fbm3(d * 2.4 + float(i) * 3.1), fbm3(d * 2.4 + 5.2 + float(i)), fbm3(d * 2.4 + 9.7 - float(i)));
       float gas = fbm3(d * 4.2 + 2.4 * q);
-      col += hues[i] * pow(gas, 2.4) * reach * reach * 1.8;
+      col += hues[i] * pow(gas, 2.4) * reach * reach * 1.35;
     }
 
     // Stars too far to resolve: a faint dust of tiny ones, thickest in the band, and a few brighter. The crisp
     // stars are drawn as points in front of the sky; these only give it depth.
-    float crowd = 0.25 + 0.75 * wide;
+    float crowd = 0.5 + 0.5 * wide;
     col += stars(d, 560.0, 0.16 * crowd, 26.0, 0.22);
     col += stars(d * 1.0007 + 0.31, 230.0, 0.05 * crowd, 30.0, 0.5);
     col += stars(d * 0.9993 - 0.17, 85.0, 0.02, 34.0, 0.9);

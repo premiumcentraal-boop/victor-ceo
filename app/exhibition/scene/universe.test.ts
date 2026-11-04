@@ -1,7 +1,7 @@
 import { describe, expect, it } from "vitest";
 import { PARALLAX, UNIVERSE, bandNormal, farGalaxies, homeViewDirection, nebulaCentres } from "./universe";
 import { DEEP_FIELD } from "./layout";
-import { FAR_GALAXIES } from "./shaders";
+import { FAR_GALAXIES, FAR_NEBULAE } from "./shaders";
 
 const length = ([x, y, z]: number[]) => Math.hypot(x, y, z);
 const dot = (a: number[], b: number[]) => a[0] * b[0] + a[1] * b[1] + a[2] * b[2];
@@ -44,8 +44,20 @@ describe("the far universe", () => {
 
   it("places one nebula close behind the galaxy in the home view", () => {
     const centres = nebulaCentres();
-    expect(centres).toHaveLength(3);
+    expect(centres).toHaveLength(UNIVERSE.nebulae);
+    expect(FAR_NEBULAE).toBe(UNIVERSE.nebulae);
     for (const centre of centres) expect(length(centre)).toBeCloseTo(1, 6);
     expect(dot(centres[0], homeViewDirection())).toBeGreaterThan(0.85);
+  });
+
+  it("spreads the nebulae round the whole sky, so every direction has one near it", () => {
+    const centres = nebulaCentres();
+    // Sample directions over the sphere: each lies within reach (cos > 0.3) of at least one cloud.
+    for (let i = 0; i < 400; i++) {
+      const y = 1 - (2 * (i + 0.5)) / 400;
+      const across = Math.sqrt(1 - y * y);
+      const direction = [across * Math.cos(i * 2.39996), y, across * Math.sin(i * 2.39996)];
+      expect(Math.max(...centres.map((c) => dot(c, direction)))).toBeGreaterThan(0.3);
+    }
   });
 });
