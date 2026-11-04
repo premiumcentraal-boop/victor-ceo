@@ -22,13 +22,14 @@ export const UNIVERSE = {
 
 /**
  * How much each layer of the sky moves with the galaxy, as a share of the galaxy's own movement. The galaxy is 1.
- * Nearer layers move more and further ones less, so the sky reads as depth, not as a backdrop: parallax.
+ * The whole sky sweeps along as the galaxy turns, so a turn feels like flying round it rather than spinning it in
+ * front of a backdrop; nearer layers sweep a little more and further ones a little less, so the sky reads as depth.
  */
 export const PARALLAX = {
-  drift: 0.55,
-  starfield: 0.32,
-  deepField: 0.18,
-  universe: 0.08,
+  drift: 0.9,
+  starfield: 0.7,
+  deepField: 0.55,
+  universe: 0.4,
 } as const;
 
 export interface FarGalaxy {
