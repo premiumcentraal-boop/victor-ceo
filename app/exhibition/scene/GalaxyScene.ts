@@ -16,16 +16,18 @@ import {
   type GalaxyLayer,
   type LayerPoints,
 } from "./layout";
-import { driftVertex, flowVertex, fullscreenVertex, hazeFragment, hazeVertex, nebulaFragment, pointFragment, pointVertex } from "./shaders";
+import { domeFragment, domeVertex, driftVertex, flowVertex, hazeFragment, hazeVertex, pointFragment, pointVertex, universeFragment, universeVertex } from "./shaders";
+import { PARALLAX, UNIVERSE, bandNormal, farGalaxies, nebulaCentres } from "./universe";
 import { flareAt, shockAt } from "../camera/zoom";
 
 /** How much detail the scene draws. Steps down when a device cannot hold its frame rate. */
 export type QualityTier = "high" | "medium" | "low";
 
-const TIERS: Record<QualityTier, { pixelRatio: number; nebula: number; density: number }> = {
-  high: { pixelRatio: 2, nebula: 1, density: 1 },
-  medium: { pixelRatio: 1.5, nebula: 0.5, density: 0.7 },
-  low: { pixelRatio: 1, nebula: 0, density: 0.4 },
+/** `universe` is the size of each face of the far universe's cube texture, in pixels. It is drawn once, at the first tier. */
+const TIERS: Record<QualityTier, { pixelRatio: number; universe: number; density: number }> = {
+  high: { pixelRatio: 2, universe: 1024, density: 1 },
+  medium: { pixelRatio: 1.5, universe: 768, density: 0.7 },
+  low: { pixelRatio: 1, universe: 512, density: 0.4 },
 };
 const TIER_ORDER: QualityTier[] = ["high", "medium", "low"];
 
@@ -33,7 +35,7 @@ const TIER_ORDER: QualityTier[] = ["high", "medium", "low"];
 const SLOW_FRAME_MS = 26;
 
 const FOV_LANDSCAPE = 40;
-/** The far plane sits beyond the deep field, so the furthest stars are drawn. */
+/** The far plane sits beyond the far universe's dome, so the furthest sky is drawn. */
 const FAR_PLANE = 300;
 /** On a portrait screen the ring of pictures is framed by its width, so this is the half-width kept in view. */
 const PHONE_HALF_WIDTH = 4.4;
@@ -58,6 +60,8 @@ const HOVER_TILT = 0.12;
 /** How quickly the high-resolution picture dissolves in, per second. */
 const FADE_RATE = 2.2;
 const CYAN = new THREE.Color(0x67e8f9);
+/** The far universe turns on its own about this axis, tilted so its drift is never a plain spin. */
+const SKY_DRIFT_AXIS = new THREE.Vector3(0.2, 1, 0.12).normalize();
 const AMBER = new THREE.Color(0xffd6aa);
 /** The scene drawing into each container. A container holds one galaxy, so a new scene replaces the old one. */
 const activeScenes = new WeakMap<HTMLElement, GalaxyScene>();
@@ -92,12 +96,22 @@ export interface GalaxySceneOptions {
   onPictureReady?: (index: number) => void;
 }
 
-interface NebulaPass {
-  target: THREE.WebGLRenderTarget;
-  uniforms: { uTime: { value: number }; uResolution: { value: THREE.Vector2 }; uIntensity: { value: number } };
+/** The far universe: painted once into a cube texture, a face a frame, then shown on a dome round the camera. */
+interface UniversePass {
+  target: THREE.WebGLCubeRenderTarget;
+  camera: THREE.CubeCamera;
   scene: THREE.Scene;
-  present: THREE.Scene;
-  camera: THREE.OrthographicCamera;
+  dome: THREE.Mesh<THREE.SphereGeometry, THREE.ShaderMaterial>;
+  /** How many of the cube's six faces are painted so far. */
+  faces: number;
+  /** 0 until the sky is painted, then rising to 1 as it fades in. */
+  fade: number;
+}
+
+/** A part of the sky that moves with the galaxy, by `share` of the galaxy's own movement. */
+interface SkyLayer {
+  object: THREE.Object3D;
+  share: number;
 }
 
 /** A ring of soft light for the shockwave: bright on a circle, dark at its centre and its edge. */
@@ -180,7 +194,16 @@ export class GalaxyScene {
   private shock: THREE.Sprite | null = null;
   private flowDistance = 0;
   private flowStrength = 0;
-  private readonly nebula: NebulaPass;
+  private readonly universe: UniversePass;
+  private readonly skyLayers: SkyLayer[] = [];
+  /** Which way the camera looks from at home. The sky follows the camera's swing away from it. */
+  private readonly homeDir = new THREE.Vector3(...homeDirection()).normalize();
+  private readonly orbit = new THREE.Quaternion();
+  private readonly skyTurn = new THREE.Quaternion();
+  private readonly skyFollow = new THREE.Quaternion();
+  private readonly skyDrift = new THREE.Quaternion();
+  private readonly skyEuler = new THREE.Euler();
+  private readonly cameraDir = new THREE.Vector3();
   private readonly fixedStep: boolean;
   private readonly forcedTier: boolean;
 
@@ -189,7 +212,7 @@ export class GalaxyScene {
   private height = 1;
   private homeDistance = BASE_HOME_DISTANCE;
   private elapsed = 0;
-  /** When set, the twinkle and the nebula hold still. Read every frame, so it follows the visitor's setting. */
+  /** When set, the twinkle and the sky's own drift hold still. Read every frame, so it follows the visitor's setting. */
   private motionReduced = false;
   private frameId = 0;
   private running = false;
@@ -238,7 +261,7 @@ export class GalaxyScene {
     this.buildDrift();
     this.buildFlow();
     this.buildPictures(images);
-    this.nebula = this.buildNebula();
+    this.universe = this.buildUniverse(TIERS[this.tier].universe);
 
     this.resetSampling();
     this.observe();
@@ -349,7 +372,7 @@ export class GalaxyScene {
     this.hoverRing = ring;
   }
 
-  /** Holds the twinkle and the nebula still, for a visitor who asks for reduced motion. */
+  /** Holds the twinkle and the sky's drift still, for a visitor who asks for reduced motion. */
   setReducedMotion(reduced: boolean): void {
     this.motionReduced = reduced;
   }
@@ -486,7 +509,14 @@ export class GalaxyScene {
       this.shock.material.map?.dispose();
       this.shock.material.dispose();
     }
-    this.nebula.target.dispose();
+    this.universe.target.dispose();
+    this.universe.dome.geometry.dispose();
+    this.universe.dome.material.dispose();
+    for (const child of this.universe.scene.children) {
+      const mesh = child as THREE.Mesh<THREE.BufferGeometry, THREE.Material>;
+      mesh.geometry.dispose();
+      mesh.material.dispose();
+    }
 
     this.renderer.dispose();
     this.renderer.forceContextLoss();
@@ -605,15 +635,23 @@ export class GalaxyScene {
     this.group.add(this.shock);
   }
 
-  /** The stars beyond the galaxy: a far field and a deeper one further out. They do not turn with the galaxy. */
-  private buildSky(): void {
-    this.addPoints(this.scene, starfieldPoints(), pointVertex, { uScale: 2.6, uBrightness: 1.0, uSwirl: 0 }, STARFIELD.count);
-    this.addPoints(this.scene, deepFieldPoints(), pointVertex, { uScale: 2.2, uBrightness: 0.8, uSwirl: 0 }, DEEP_FIELD.count);
+  /** A part of the sky that moves with the galaxy by `share` of its movement, so the further it is, the less it moves. */
+  private addSkyLayer(share: number): THREE.Group {
+    const object = new THREE.Group();
+    this.scene.add(object);
+    this.skyLayers.push({ object, share });
+    return object;
   }
 
-  /** Stars floating in the space round the galaxy. They bob in place, outside the galaxy's own turn. */
+  /** The stars beyond the galaxy: a far field and a deeper one further out. Each moves less than the galaxy. */
+  private buildSky(): void {
+    this.addPoints(this.addSkyLayer(PARALLAX.starfield), starfieldPoints(), pointVertex, { uScale: 2.6, uBrightness: 1.0, uSwirl: 0 }, STARFIELD.count);
+    this.addPoints(this.addSkyLayer(PARALLAX.deepField), deepFieldPoints(), pointVertex, { uScale: 2.2, uBrightness: 0.8, uSwirl: 0 }, DEEP_FIELD.count);
+  }
+
+  /** Stars floating in the space round the galaxy. They bob in place, and move with it a little. */
   private buildDrift(): void {
-    this.addPoints(this.scene, driftPoints(), driftVertex, { uScale: 3.6, uBrightness: 0.8 }, DRIFT.count);
+    this.addPoints(this.addSkyLayer(PARALLAX.drift), driftPoints(), driftVertex, { uScale: 3.6, uBrightness: 0.8 }, DRIFT.count);
   }
 
   /** The stars that rush past the visitor as the page scrolls. They are drawn in the view, and hidden until the flow starts. */
@@ -715,41 +753,101 @@ export class GalaxyScene {
     this.options.onPictureReady?.(index);
   }
 
-  private buildNebula(): NebulaPass {
-    const target = new THREE.WebGLRenderTarget(1, 1, { depthBuffer: false });
-    const uniforms = {
-      uTime: { value: 0 },
-      uResolution: { value: new THREE.Vector2(1, 1) },
-      uIntensity: { value: 2.0 },
-    };
-    const camera = new THREE.OrthographicCamera(-1, 1, 1, -1, 0, 1);
-
+  /**
+   * The far universe: a scene with one sphere that paints the sky by direction, a cube camera to capture it, and
+   * the dome that shows the capture. The dome is drawn first, behind everything, and follows the camera.
+   */
+  private buildUniverse(size: number): UniversePass {
+    const target = new THREE.WebGLCubeRenderTarget(size, { generateMipmaps: true, minFilter: THREE.LinearMipmapLinearFilter });
+    const camera = new THREE.CubeCamera(0.1, 10, target);
+    const galaxies = farGalaxies();
     const scene = new THREE.Scene();
     scene.add(
       new THREE.Mesh(
-        new THREE.PlaneGeometry(2, 2),
-        new THREE.ShaderMaterial({ vertexShader: fullscreenVertex, fragmentShader: nebulaFragment, uniforms, depthTest: false, depthWrite: false })
-      )
-    );
-
-    const present = new THREE.Scene();
-    present.add(
-      new THREE.Mesh(
-        new THREE.PlaneGeometry(2, 2),
+        new THREE.SphereGeometry(1, 48, 24),
         new THREE.ShaderMaterial({
-          vertexShader: fullscreenVertex,
-          fragmentShader: /* glsl */ `
-            uniform sampler2D tNebula;
-            varying vec2 vUv;
-            void main() { gl_FragColor = texture2D(tNebula, vUv); }
-          `,
-          uniforms: { tNebula: { value: target.texture } },
+          vertexShader: universeVertex,
+          fragmentShader: universeFragment,
+          uniforms: {
+            uBandNormal: { value: new THREE.Vector3(...bandNormal()) },
+            uNebula: { value: nebulaCentres().map((c) => new THREE.Vector3(...c)) },
+            uGalaxies: { value: galaxies.map((g) => new THREE.Vector4(...g.direction, g.radius)) },
+            uShapes: { value: galaxies.map((g) => new THREE.Vector4(g.ratio, g.angle, g.brightness, g.warmth)) },
+          },
+          side: THREE.BackSide,
           depthTest: false,
           depthWrite: false,
         })
       )
     );
-    return { target, uniforms, scene, present, camera };
+
+    const dome = new THREE.Mesh(
+      new THREE.SphereGeometry(UNIVERSE.domeRadius, 64, 32),
+      new THREE.ShaderMaterial({
+        vertexShader: domeVertex,
+        fragmentShader: domeFragment,
+        uniforms: { tUniverse: { value: target.texture }, uIntensity: { value: 0 } },
+        side: THREE.BackSide,
+        depthTest: false,
+        depthWrite: false,
+      })
+    );
+    // Drawn first, behind everything, and never culled: the camera is always inside it.
+    dome.renderOrder = -1;
+    dome.frustumCulled = false;
+    dome.visible = false;
+    this.scene.add(dome);
+    return { target, camera, scene, dome, faces: 0, fade: 0 };
+  }
+
+  /** Paints one face of the far universe's cube. Six frames paint the whole sky, so no single frame stalls. */
+  private paintUniverseFace(): void {
+    const { camera, target, scene } = this.universe;
+    if (camera.coordinateSystem !== this.renderer.coordinateSystem) {
+      camera.coordinateSystem = this.renderer.coordinateSystem;
+      camera.updateCoordinateSystem();
+    }
+    camera.updateMatrixWorld();
+    const face = this.universe.faces;
+    // Mipmaps once, after the last face, so the sky stays smooth when it is seen small.
+    target.texture.generateMipmaps = face === 5;
+    this.renderer.setRenderTarget(target, face);
+    this.renderer.clear();
+    this.renderer.render(scene, camera.children[face] as THREE.Camera);
+    this.renderer.setRenderTarget(null);
+    this.universe.faces++;
+    if (this.universe.faces === 6) this.universe.dome.visible = true;
+  }
+
+  /**
+   * Moves the sky with the galaxy: each layer turns with the galaxy and swings with the camera by its share, so
+   * the drifting stars move a little, the far stars less, and the far universe hardly at all, as distance would
+   * have it. The far universe also turns very slowly on its own and stays centred on the camera.
+   */
+  private updateSky(dt: number): void {
+    const { x: tiltX, y: yaw } = this.group.rotation;
+    // The camera's swing round the galaxy, from its home view. Close to the centre its direction means nothing.
+    if (this.camera.position.lengthSq() > 1) {
+      this.orbit.setFromUnitVectors(this.homeDir, this.cameraDir.copy(this.camera.position).normalize());
+    }
+    const place = (object: THREE.Object3D, share: number, drift?: THREE.Quaternion) => {
+      this.skyTurn.setFromEuler(this.skyEuler.set(tiltX * share, yaw * share, 0));
+      // A layer that swung fully with the camera would look painted on the screen; one that stayed put would
+      // sweep past as fast as the galaxy. Following the swing by all but its share leaves it moving by its share.
+      this.skyFollow.identity().slerp(this.orbit, 1 - share);
+      object.quaternion.copy(this.skyFollow).multiply(this.skyTurn);
+      if (drift) object.quaternion.multiply(drift);
+    };
+    for (const layer of this.skyLayers) place(layer.object, layer.share);
+
+    const universe = this.universe;
+    this.skyDrift.setFromAxisAngle(SKY_DRIFT_AXIS, this.elapsed * UNIVERSE.driftRate);
+    place(universe.dome, PARALLAX.universe, this.skyDrift);
+    universe.dome.position.copy(this.camera.position);
+    if (universe.faces === 6 && universe.fade < 1) {
+      universe.fade = this.motionReduced ? 1 : Math.min(1, universe.fade + dt / UNIVERSE.fadeSeconds);
+      universe.dome.material.uniforms.uIntensity.value = universe.fade * universe.fade * (3 - 2 * universe.fade);
+    }
   }
 
   // ── Frame, size and quality ──────────────────────────────────────────────
@@ -810,11 +908,6 @@ export class GalaxyScene {
       layer.points.geometry.setDrawRange(0, Math.floor(layer.count * settings.density));
       layer.material.uniforms.uPixelRatio.value = this.renderer.getPixelRatio();
     }
-    const size = this.renderer.getDrawingBufferSize(new THREE.Vector2());
-    const nebulaW = Math.max(1, Math.floor(size.x * settings.nebula));
-    const nebulaH = Math.max(1, Math.floor(size.y * settings.nebula));
-    this.nebula.target.setSize(nebulaW, nebulaH);
-    this.nebula.uniforms.uResolution.value.set(nebulaW, nebulaH);
   }
 
   private resetSampling(): void {
@@ -893,7 +986,6 @@ export class GalaxyScene {
     for (const layer of this.layers) {
       layer.material.uniforms.uTime.value = this.elapsed;
     }
-    this.nebula.uniforms.uTime.value = this.elapsed;
     if (this.haze) this.haze.material.uniforms.uTime.value = this.elapsed;
     // Close to the core, the core dims by up to half, so the dive ends in a glow rather than a white-out.
     const soften = 1 - 0.5 * this.coreTravel;
@@ -915,6 +1007,7 @@ export class GalaxyScene {
     }
 
     this.options.onFrame?.(dt, this.elapsed);
+    this.updateSky(dt);
     this.updateHover(dt);
     this.sample(realSeconds);
     this.render();
@@ -922,17 +1015,8 @@ export class GalaxyScene {
 
   private render(): void {
     const renderer = this.renderer;
-    if (TIERS[this.tier].nebula > 0) {
-      renderer.setRenderTarget(this.nebula.target);
-      renderer.clear();
-      renderer.render(this.nebula.scene, this.nebula.camera);
-      renderer.setRenderTarget(null);
-      renderer.clear();
-      renderer.render(this.nebula.present, this.nebula.camera);
-    } else {
-      renderer.clear();
-    }
-    renderer.clearDepth();
+    if (this.universe.faces < 6) this.paintUniverseFace();
+    renderer.clear();
     renderer.render(this.scene, this.camera);
   }
 }

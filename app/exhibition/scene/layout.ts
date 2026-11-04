@@ -166,7 +166,7 @@ export const STARFIELD = {
 
 /** A deeper shell, further out than the far starfield, so the sky keeps going past where the eye can follow. */
 export const DEEP_FIELD = {
-  count: 1800,
+  count: 3200,
   inner: 90,
   outer: 160,
 } as const;

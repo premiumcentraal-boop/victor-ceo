@@ -54,16 +54,7 @@ export const pointFragment = /* glsl */ `
   }
 `;
 
-export const fullscreenVertex = /* glsl */ `
-  varying vec2 vUv;
-
-  void main() {
-    vUv = uv;
-    gl_Position = vec4(position.xy, 0.0, 1.0);
-  }
-`;
-
-/** Value noise and its fractal sum, shared by the nebula and the galaxy's haze. */
+/** Value noise and its fractal sum, for the galaxy's haze. */
 const noiseGlsl = /* glsl */ `
   float hash(vec2 p) {
     p = fract(p * vec2(123.34, 456.21));
@@ -91,32 +82,6 @@ const noiseGlsl = /* glsl */ `
       a *= 0.5;
     }
     return v;
-  }
-`;
-
-/** Slow, deep nebula: domain-warped noise in the site's cyan and violet, fading to black at the edges. */
-export const nebulaFragment = /* glsl */ `
-  uniform float uTime;
-  uniform vec2 uResolution;
-  uniform float uIntensity;
-  varying vec2 vUv;
-
-  ${noiseGlsl}
-
-  void main() {
-    vec2 uv = (vUv - 0.5) * vec2(uResolution.x / uResolution.y, 1.0);
-    float t = uTime * 0.025;
-    vec2 q = vec2(fbm(uv * 1.4 + t), fbm(uv * 1.4 + vec2(5.2, 1.3) - t));
-    float n = fbm(uv * 2.0 + 1.6 * q + vec2(t * 0.6, -t * 0.4));
-
-    vec3 deep = vec3(0.004, 0.005, 0.012);
-    vec3 violet = vec3(0.13, 0.06, 0.22);
-    vec3 teal = vec3(0.02, 0.15, 0.19);
-    vec3 cloud = mix(violet, teal, clamp(q.x * 1.3, 0.0, 1.0)) * smoothstep(0.25, 0.8, n);
-
-    float edge = smoothstep(1.15, 0.25, length(uv));
-    vec3 col = deep + cloud * edge * uIntensity;
-    gl_FragColor = vec4(col, 1.0);
   }
 `;
 
@@ -223,5 +188,157 @@ export const hazeFragment = /* glsl */ `
     vec3 coreColor = vec3(1.0, 0.8, 0.55);
     vec3 col = mix(armColor, coreColor, bulge) * (arms * dust * 0.9 + 0.08 * dust + bulge * 0.6) * edge * uIntensity;
     gl_FragColor = vec4(col, 1.0);
+  }
+`;
+
+/** How many distant galaxies the far universe draws. Kept in step with UNIVERSE.galaxies. */
+export const FAR_GALAXIES = 28;
+
+/** A unit sphere round the cube camera: each fragment's direction is the direction it paints in the sky. */
+export const universeVertex = /* glsl */ `
+  varying vec3 vDir;
+
+  void main() {
+    vDir = position;
+    gl_Position = projectionMatrix * modelViewMatrix * vec4(position, 1.0);
+  }
+`;
+
+/**
+ * The far universe, painted once into a cube texture: a faint band of the sky with dark dust lanes through it,
+ * three nebula clouds, stars of every brightness (densest in the band), and small distant galaxies. Everything is
+ * a function of direction alone, so the sky is seamless all the way round.
+ */
+export const universeFragment = /* glsl */ `
+  uniform vec3 uBandNormal;
+  uniform vec3 uNebula[3];
+  uniform vec4 uGalaxies[${FAR_GALAXIES}];
+  uniform vec4 uShapes[${FAR_GALAXIES}];
+  varying vec3 vDir;
+
+  float hash31(vec3 p) {
+    p = fract(p * 0.3183099 + 0.1);
+    p *= 17.0;
+    return fract(p.x * p.y * p.z * (p.x + p.y + p.z));
+  }
+
+  vec3 hash33(vec3 p) {
+    p = vec3(dot(p, vec3(127.1, 311.7, 74.7)), dot(p, vec3(269.5, 183.3, 246.1)), dot(p, vec3(113.5, 271.9, 124.6)));
+    return fract(sin(p) * 43758.5453123);
+  }
+
+  float noise3(vec3 x) {
+    vec3 i = floor(x);
+    vec3 f = fract(x);
+    f = f * f * (3.0 - 2.0 * f);
+    return mix(
+      mix(mix(hash31(i), hash31(i + vec3(1.0, 0.0, 0.0)), f.x), mix(hash31(i + vec3(0.0, 1.0, 0.0)), hash31(i + vec3(1.0, 1.0, 0.0)), f.x), f.y),
+      mix(mix(hash31(i + vec3(0.0, 0.0, 1.0)), hash31(i + vec3(1.0, 0.0, 1.0)), f.x), mix(hash31(i + vec3(0.0, 1.0, 1.0)), hash31(i + vec3(1.0, 1.0, 1.0)), f.x), f.y),
+      f.z
+    );
+  }
+
+  float fbm3(vec3 p) {
+    float v = 0.0;
+    float a = 0.5;
+    for (int i = 0; i < 5; i++) {
+      v += a * noise3(p);
+      p = p * 2.03 + vec3(1.7, 9.2, 3.1);
+      a *= 0.5;
+    }
+    return v;
+  }
+
+  // One star at most in each cell of a grid laid through the sky. Its centre keeps away from the cell's walls,
+  // so a star is never cut in half where two cells meet.
+  vec3 stars(vec3 d, float scale, float chance, float sharpness, float gain) {
+    vec3 p = d * scale;
+    vec3 cell = floor(p);
+    vec3 h = hash33(cell);
+    if (h.x > chance) return vec3(0.0);
+    vec3 centre = cell + 0.3 + 0.4 * hash33(cell + 19.19);
+    // Distance from the star to the line of sight, in cells: the star is a round point however the grid is cut.
+    float off = length(centre - d * dot(centre, d));
+    float glow = exp(-off * off * sharpness);
+    // Most stars are faint; a few are bright.
+    float brightness = 0.25 + 2.6 * pow(h.y, 14.0) + 0.5 * h.y;
+    vec3 tint = mix(vec3(0.72, 0.84, 1.0), vec3(1.0, 0.86, 0.7), smoothstep(0.55, 1.0, h.z));
+    return tint * brightness * glow * gain;
+  }
+
+  void main() {
+    vec3 d = normalize(vDir);
+
+    // The band: a soft lane of light across the sky, brighter and warmer at its heart, broken by dust.
+    float lat = dot(d, uBandNormal);
+    float band = exp(-lat * lat / 0.026);
+    float wide = exp(-lat * lat / 0.16);
+    float cloud = fbm3(d * 3.2);
+    float lanes = smoothstep(0.42, 0.7, fbm3(d * 7.0 + 11.0));
+    vec3 bandColour = mix(vec3(0.16, 0.2, 0.34), vec3(0.5, 0.42, 0.36), band);
+    vec3 col = bandColour * (0.07 * wide + 0.55 * band * cloud) * (1.0 - 0.8 * lanes * band);
+
+    // Three nebula clouds in the site's teal, violet and rose, their shapes warped so they read as gas.
+    vec3 hues[3];
+    hues[0] = vec3(0.05, 0.32, 0.4);
+    hues[1] = vec3(0.32, 0.1, 0.5);
+    hues[2] = vec3(0.45, 0.12, 0.26);
+    for (int i = 0; i < 3; i++) {
+      float near = dot(d, uNebula[i]);
+      if (near < 0.55) continue;
+      float reach = smoothstep(0.55, 1.0, near);
+      vec3 q = vec3(fbm3(d * 2.4 + float(i) * 3.1), fbm3(d * 2.4 + 5.2 + float(i)), fbm3(d * 2.4 + 9.7 - float(i)));
+      float gas = fbm3(d * 4.2 + 2.4 * q);
+      col += hues[i] * pow(gas, 2.4) * reach * reach * 1.8;
+    }
+
+    // Stars too far to resolve: a faint dust of tiny ones, thickest in the band, and a few brighter. The crisp
+    // stars are drawn as points in front of the sky; these only give it depth.
+    float crowd = 0.25 + 0.75 * wide;
+    col += stars(d, 560.0, 0.16 * crowd, 26.0, 0.22);
+    col += stars(d * 1.0007 + 0.31, 230.0, 0.05 * crowd, 30.0, 0.5);
+    col += stars(d * 0.9993 - 0.17, 85.0, 0.02, 34.0, 0.9);
+
+    // The distant galaxies: a bright core, a faint disc, and a hint of arms in the larger ones.
+    for (int i = 0; i < ${FAR_GALAXIES}; i++) {
+      vec3 g = uGalaxies[i].xyz;
+      float radius = uGalaxies[i].w;
+      if (dot(d, g) < cos(radius * 5.0)) continue;
+      vec3 t = normalize(cross(g, abs(g.y) < 0.9 ? vec3(0.0, 1.0, 0.0) : vec3(1.0, 0.0, 0.0)));
+      vec3 b = cross(g, t);
+      vec2 uv = vec2(dot(d, t), dot(d, b)) / radius;
+      float c = cos(uShapes[i].y);
+      float s = sin(uShapes[i].y);
+      uv = vec2(c * uv.x - s * uv.y, s * uv.x + c * uv.y);
+      uv.y /= uShapes[i].x;
+      float r = length(uv);
+      float arms = 0.65 + 0.35 * cos(2.0 * atan(uv.y, uv.x) - 4.0 * log(r + 0.08));
+      vec3 tone = mix(vec3(0.7, 0.8, 1.0), vec3(1.0, 0.82, 0.62), uShapes[i].w);
+      col += tone * (exp(-r * r * 14.0) * 1.1 + exp(-r * 2.6) * 0.32 * arms) * uShapes[i].z;
+    }
+
+    // A whisper of noise, so the faint gradients never band in an 8-bit texture.
+    col += (hash31(d * 1731.3) - 0.5) / 255.0;
+    gl_FragColor = vec4(max(col, 0.0), 1.0);
+  }
+`;
+
+/** The dome the far universe is shown on. It sits on the far side of everything, centred on the camera. */
+export const domeVertex = /* glsl */ `
+  varying vec3 vDir;
+
+  void main() {
+    vDir = position;
+    gl_Position = projectionMatrix * modelViewMatrix * vec4(position, 1.0);
+  }
+`;
+
+export const domeFragment = /* glsl */ `
+  uniform samplerCube tUniverse;
+  uniform float uIntensity;
+  varying vec3 vDir;
+
+  void main() {
+    gl_FragColor = vec4(textureCube(tUniverse, normalize(vDir)).rgb * uIntensity, 1.0);
   }
 `;
