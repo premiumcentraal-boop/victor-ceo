@@ -36,6 +36,10 @@ export const router = createBrowserRouter([
         lazy: async () => ({ Component: (await import("./pages/Meridian")).Meridian }),
       },
       {
+        path: "agentbridge",
+        lazy: async () => ({ Component: (await import("./pages/AgentBridge")).AgentBridge }),
+      },
+      {
         path: "*",
         element: <Navigate to="/" replace />,
       },
