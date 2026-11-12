@@ -1,6 +1,7 @@
 @import './fonts.css';
 @import './tailwind.css';
 @import './theme.css';
+@import './products.css';
 
 /* Respect the visitor's motion setting wherever CSS drives motion. JavaScript-driven motion uses useReducedMotion. */
 @media (prefers-reduced-motion: reduce) {

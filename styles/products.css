@@ -1,0 +1,83 @@
+.agentbridge-nav-entry {
+  display: inline-flex;
+  align-items: center;
+  gap: 9px;
+  padding: 8px 17px 8px 12px;
+  border: 1px solid rgb(255 255 255 / 24%);
+  border-radius: 999px;
+  background: linear-gradient(135deg, rgb(255 255 255 / 12%), rgb(255 255 255 / 4%));
+  color: #ededed;
+  font: 12px var(--font-mono, ui-monospace, monospace);
+  letter-spacing: .1em;
+  transition: background .2s, border-color .2s, color .2s;
+}
+.agentbridge-nav-entry > svg:last-child { margin-left: 3px; color: #a0a0a0; }
+.agentbridge-nav-entry:hover, .agentbridge-nav-entry.is-current { background: rgb(255 255 255 / 14%); border-color: rgb(255 255 255 / 55%); color: #fff; }
+.agentbridge-nav-entry:focus-visible, .victor-mobile-menu a:focus-visible, .victor-menu-close:focus-visible, .agentbridge-product-actions a:focus-visible { outline: 2px solid #a4c8ff; outline-offset: 4px; }
+
+.victor-menu-overlay { position: fixed; inset: 0; z-index: 60; background: rgb(0 0 0 / 60%); backdrop-filter: blur(5px); }
+.victor-mobile-menu {
+  position: fixed;
+  inset: 0 0 0 auto;
+  z-index: 70;
+  width: min(360px, 92vw);
+  display: flex;
+  flex-direction: column;
+  gap: 28px;
+  padding: max(20px, env(safe-area-inset-top)) 24px max(24px, env(safe-area-inset-bottom));
+  overflow-y: auto;
+  color: #f1f1f1;
+  background: rgb(11 11 11 / 97%);
+  border-left: 1px solid rgb(255 255 255 / 15%);
+  box-shadow: -24px 0 80px rgb(0 0 0 / 35%);
+  font-family: var(--font-sans, sans-serif);
+}
+.victor-menu-overlay[data-state="open"] { animation: victor-overlay-in .2s ease both; }
+.victor-menu-overlay[data-state="closed"] { animation: victor-overlay-in .2s ease reverse both; }
+.victor-mobile-menu[data-state="open"] { animation: victor-menu-in .28s cubic-bezier(.22, 1, .36, 1) both; }
+.victor-mobile-menu[data-state="closed"] { animation: victor-menu-in .2s ease reverse both; }
+.victor-menu-heading { display: flex; align-items: center; justify-content: space-between; gap: 16px; }
+.victor-menu-heading h2 { font-size: 16px; font-weight: 500; letter-spacing: -.03em; }
+.victor-menu-close { display: grid; place-items: center; width: 40px; height: 40px; border: 1px solid rgb(255 255 255 / 15%); border-radius: 50%; background: rgb(255 255 255 / 5%); color: #ccc; cursor: pointer; }
+.victor-menu-close:hover { background: rgb(255 255 255 / 12%); color: #fff; }
+.victor-menu-links { display: flex; flex-direction: column; gap: 12px; }
+.victor-menu-links > a { display: flex; align-items: center; gap: 12px; min-height: 49px; padding: 12px 16px; border: 1px solid rgb(255 255 255 / 12%); border-radius: 15px; background: rgb(255 255 255 / 4%); font: 11px var(--font-mono, ui-monospace, monospace); letter-spacing: .12em; transition: background .2s, border-color .2s; }
+.victor-menu-links > a:hover, .victor-menu-links > a[aria-current="page"] { background: rgb(255 255 255 / 10%); border-color: rgb(255 255 255 / 30%); }
+.victor-menu-section { margin: 16px 0 0 4px; color: #959595; font: 9px var(--font-mono, ui-monospace, monospace); letter-spacing: .18em; }
+.agentbridge-menu-card { overflow: hidden; border: 1px solid rgb(255 255 255 / 24%); border-radius: 21px; background: linear-gradient(135deg, rgb(255 255 255 / 10%), rgb(255 255 255 / 3%)); }
+.agentbridge-menu-card.is-current { border-color: rgb(255 255 255 / 55%); }
+.agentbridge-menu-card:focus-within { outline: 2px solid #a4c8ff; outline-offset: 3px; }
+.agentbridge-menu-product { display: flex; align-items: center; gap: 13px; padding: 17px 15px; }
+.agentbridge-menu-product:hover, .agentbridge-menu-studio:hover { background: rgb(255 255 255 / 6%); }
+.agentbridge-menu-mark { display: grid; flex-shrink: 0; place-items: center; width: 44px; height: 44px; border-radius: 14px; border: 1px solid rgb(255 255 255 / 14%); background: rgb(255 255 255 / 5%); }
+.agentbridge-menu-product strong { display: block; font-size: 15px; font-weight: 500; letter-spacing: -.025em; }
+.agentbridge-menu-product small { display: block; margin-top: 4px; font-size: 11px; color: #b2b2b2; }
+.agentbridge-menu-product > svg { flex-shrink: 0; margin-left: auto; color: #b2b2b2; }
+.agentbridge-menu-studio { display: flex; align-items: center; justify-content: space-between; padding: 13px 17px; border-top: 1px solid rgb(255 255 255 / 12%); font-size: 12px; color: #d2d2d2; }
+.victor-menu-footer { margin-top: auto; padding-top: 12px; color: #777; font: 10px var(--font-mono, ui-monospace, monospace); letter-spacing: .18em; }
+
+.agentbridge-product-page { position: relative; z-index: 10; width: 100%; height: calc(100dvh - var(--header-h, 80px)); min-height: 280px; flex: 0 0 auto; display: flex; flex-direction: column; background: #090909; }
+.agentbridge-product-toolbar { display: flex; flex-wrap: wrap; align-items: center; justify-content: space-between; gap: 12px 24px; padding: 13px max(24px, calc((100vw - 1336px) / 2)); border-bottom: 1px solid rgb(255 255 255 / 12%); background: #0b0b0b; }
+.agentbridge-product-identity { display: flex; align-items: center; gap: 10px; font-size: 13px; color: #eee; }
+.agentbridge-product-identity small { display: block; margin-top: 2px; color: #969696; font-size: 10px; }
+.agentbridge-product-actions { display: flex; align-items: center; gap: 22px; }
+.agentbridge-product-actions a { display: inline-flex; align-items: center; justify-content: center; gap: 7px; min-height: 35px; font-size: 11px; color: #bdbdbd; transition: background .2s, color .2s; }
+.agentbridge-product-actions a:hover { color: #fff; }
+.agentbridge-product-actions .agentbridge-open-product { padding: 7px 13px; border: 1px solid rgb(255 255 255 / 20%); border-radius: 999px; background: rgb(255 255 255 / 6%); color: #eee; }
+.agentbridge-product-actions .agentbridge-open-product:hover { background: rgb(255 255 255 / 12%); }
+.agentbridge-product-page iframe { display: block; width: 100%; min-height: 0; flex: 1; border: 0; background: #090909; }
+@keyframes victor-overlay-in { from { opacity: 0; } to { opacity: 1; } }
+@keyframes victor-menu-in { from { transform: translateX(100%); } to { transform: translateX(0); } }
+@media (min-width: 1280px) { .victor-menu-overlay, .victor-mobile-menu { display: none; } }
+@media (max-width: 600px) {
+  .agentbridge-product-toolbar { padding: 12px 16px; gap: 12px; }
+  .agentbridge-product-actions { gap: 13px; margin-left: auto; }
+  .agentbridge-product-actions a { font-size: 10px; }
+  .agentbridge-product-identity { font-size: 12px; gap: 6px; }
+  .agentbridge-product-identity > svg { width: 22px; height: 22px; }
+  .agentbridge-product-identity small { display: none; }
+}
+@media (max-width: 380px) {
+  .agentbridge-product-actions { width: 100%; justify-content: flex-end; }
+  .agentbridge-product-toolbar { row-gap: 8px; }
+}
